@@ -1,0 +1,1337 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>夜间篝火 · Three.js</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #05080f; }
+  #app { width: 100%; height: 100%; }
+
+  #overlay {
+    position: fixed; inset: 0; z-index: 10;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    background: radial-gradient(ellipse at center, rgba(10,14,26,.92), rgba(3,5,10,.98));
+    color: #f3e9d8; font-family: "Segoe UI", system-ui, sans-serif;
+    cursor: pointer; user-select: none;
+    transition: opacity 1.2s ease;
+  }
+  #overlay.hidden { opacity: 0; pointer-events: none; }
+  #overlay h1 { font-size: 42px; font-weight: 300; letter-spacing: .35em; margin: 0 0 18px; text-indent: .35em; }
+  #overlay p  { font-size: 15px; color: #b8a98f; margin: 6px 0; letter-spacing: .1em; }
+  #overlay .fire-icon { font-size: 64px; margin-bottom: 24px; animation: breathe 2.4s ease-in-out infinite; }
+  @keyframes breathe { 0%,100% { transform: scale(1); opacity:.85 } 50% { transform: scale(1.12); opacity:1 } }
+
+  #hud {
+    position: fixed; left: 16px; bottom: 14px; z-index: 5;
+    color: rgba(235,220,195,.75); font: 12px/1.7 "Segoe UI", system-ui, sans-serif;
+    text-shadow: 0 1px 3px rgba(0,0,0,.9); pointer-events: none; letter-spacing: .04em;
+    white-space: pre-line;
+  }
+
+  #panel {
+    position: fixed; top: 14px; right: 14px; z-index: 6; width: 244px;
+    background: rgba(8,12,22,.84); border: 1px solid rgba(255,160,70,.18);
+    border-radius: 10px; backdrop-filter: blur(6px);
+    font: 12px/1.4 "Segoe UI", system-ui, sans-serif; color: #e8dcc8;
+    user-select: none;
+  }
+  #panelHead {
+    padding: 10px 14px; cursor: pointer; letter-spacing: .12em;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  #panelHead:hover { color: #ffc890; }
+  #panelBody { padding: 0 14px 12px; max-height: calc(100vh - 110px); overflow-y: auto; }
+  #panel.collapsed #panelBody { display: none; }
+  #panelBody::-webkit-scrollbar { width: 6px; }
+  #panelBody::-webkit-scrollbar-thumb { background: rgba(255,160,70,.25); border-radius: 3px; }
+  .pgroup {
+    margin: 12px 0 4px; color: #ffa24d; font-size: 11px; letter-spacing: .25em;
+    border-bottom: 1px solid rgba(255,160,70,.15); padding-bottom: 4px;
+  }
+  .prow { display: grid; grid-template-columns: 1fr auto; gap: 1px 8px; margin: 8px 0; }
+  .pname { color: #cfc2ab; }
+  .pval  { color: #ffb46a; font-variant-numeric: tabular-nums; }
+  .prow input[type=range] {
+    grid-column: 1 / -1; width: 100%; height: 16px; margin: 0;
+    accent-color: #ff8a3c; cursor: pointer;
+  }
+
+  #addLog {
+    position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
+    z-index: 6; padding: 11px 28px; border-radius: 999px;
+    background: rgba(30,18,8,.85); color: #ffc890;
+    border: 1px solid rgba(255,160,70,.4);
+    font: 15px/1 "Segoe UI", system-ui, sans-serif; letter-spacing: .15em;
+    cursor: pointer; backdrop-filter: blur(6px);
+    transition: background .15s, box-shadow .15s, opacity .15s;
+  }
+  #addLog:hover { background: rgba(60,32,12,.9); box-shadow: 0 0 18px rgba(255,140,40,.35); }
+  #addLog:active { transform: translateX(-50%) scale(.94); }
+  #addLog:disabled { opacity: .45; cursor: default; box-shadow: none; }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="app"></div>
+<div id="overlay">
+  <div class="fire-icon">🔥</div>
+  <h1>夜 间 篝 火</h1>
+  <p>点击任意处进入（开启声音）</p>
+  <p>拖动旋转 · 滚轮缩放 —— 远离篝火，声音按 1/r 衰减</p>
+</div>
+<div id="hud"></div>
+<button id="addLog">🪵 加柴</button>
+<div id="panel">
+  <div id="panelHead"><span>⚙ 参数调节</span><span id="panelArrow">▾</span></div>
+  <div id="panelBody"></div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+/* ============================================================
+   基础场景
+   ============================================================ */
+const NIGHT = 0x0a1020;
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(NIGHT);
+scene.fog = new THREE.FogExp2(NIGHT, 0.012);
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 1000);
+camera.position.set(3.6, 2.0, 5.4);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.1;
+document.getElementById('app').appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 0.8, 0);
+controls.enableDamping = true;
+controls.dampingFactor = 0.06;
+controls.minDistance = 1.5;
+controls.maxDistance = 45;
+controls.maxPolarAngle = Math.PI / 2 - 0.03;
+
+/* ============================================================
+   可调参数（右上角滑块面板，运行时实时生效）
+   ============================================================ */
+const P = {
+  fireScale:   1.0,    // 火势：火焰大小、火光强度、轰鸣音量
+  buoyancy:    3.8,    // 热浮升力 (m/s²)
+  sparkRate:   22,     // 火星生成率 (个/秒)
+  smokeRate:   9,      // 烟雾生成率 (个/秒)
+  wind:        0.22,   // 风速 (m/s)
+  masterVol:   0.9,    // 总音量
+  crackleRate: 6,      // 噼啪平均频率 (次/秒)
+  rolloff:     1.0,    // 声音距离衰减系数（1 = 物理真实的 1/r）
+  airAbsorb:   1.0,    // 空气高频吸收强度
+  moonInt:     0.12,   // 月光强度（月牙较弱）
+  fog:         0.012,  // 雾浓度
+  exposure:    1.1     // 画面曝光
+};
+
+/* ============================================================
+   环境：地面、星空、月亮、树木、石头
+   ============================================================ */
+// 地面：程序化砂土碎石纹理
+function makeGroundTexture() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 256;
+  const g = c.getContext('2d');
+  g.fillStyle = '#1f160d';
+  g.fillRect(0, 0, 256, 256);
+  for (let i = 0; i < 2600; i++) {
+    const l = Math.random();
+    g.fillStyle = `rgba(${34 + l * 52 | 0},${24 + l * 38 | 0},${15 + l * 24 | 0},${0.3 + Math.random() * 0.45})`;
+    const s = 1 + Math.random() * 2;
+    g.fillRect(Math.random() * 256, Math.random() * 256, s, s);
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(24, 24);
+  return tex;
+}
+const ground = new THREE.Mesh(
+  new THREE.CircleGeometry(60, 64),
+  new THREE.MeshStandardMaterial({ map: makeGroundTexture(), roughness: 1.0, metalness: 0.0 })
+);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// 星空：大气闪烁（scintillation）——低空星光穿过更厚的大气，闪烁越明显；
+// 每颗星有独立的相位/速度/振幅
+let starMat;
+{
+  const N = 1800;
+  const pos = new Float32Array(N * 3);
+  const phase = new Float32Array(N);
+  const speed = new Float32Array(N);
+  const amp = new Float32Array(N);
+  const size = new Float32Array(N);
+  const dpr = Math.min(devicePixelRatio, 2);
+  for (let i = 0; i < N; i++) {
+    const theta = Math.random() * Math.PI * 2;
+    const phi = Math.acos(Math.random() * 0.95);            // 偏向天顶的半球分布
+    const r = 380;
+    pos[i*3]   = r * Math.sin(phi) * Math.cos(theta);
+    pos[i*3+1] = r * Math.cos(phi) + 5;
+    pos[i*3+2] = r * Math.sin(phi) * Math.sin(theta);
+    const elev = Math.cos(phi);                              // 1=天顶 0=地平线
+    phase[i] = Math.random() * Math.PI * 2;
+    speed[i] = 1.5 + Math.random() * 4;
+    amp[i]   = 0.12 + 0.33 * (1 - elev);                     // 低空闪烁更强
+    size[i]  = (1.0 + Math.random() * 1.9) * dpr;
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('aPhase', new THREE.BufferAttribute(phase, 1));
+  g.setAttribute('aSpeed', new THREE.BufferAttribute(speed, 1));
+  g.setAttribute('aAmp',   new THREE.BufferAttribute(amp, 1));
+  g.setAttribute('aSize',  new THREE.BufferAttribute(size, 1));
+  starMat = new THREE.ShaderMaterial({
+    uniforms: { uTime: { value: 0 } },
+    vertexShader: /* glsl */`
+      attribute float aPhase;
+      attribute float aSpeed;
+      attribute float aAmp;
+      attribute float aSize;
+      varying float vTw;
+      uniform float uTime;
+      void main() {
+        vTw = 1.0 - aAmp * (0.5 + 0.5 * sin(uTime * aSpeed + aPhase));
+        gl_PointSize = aSize;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }`,
+    fragmentShader: /* glsl */`
+      varying float vTw;
+      void main() {
+        float dd = length(gl_PointCoord - 0.5);
+        float a = smoothstep(0.5, 0.08, dd) * vTw * 0.9;
+        if (a < 0.01) discard;
+        gl_FragColor = vec4(vec3(0.80, 0.85, 1.0) * vTw, a);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`,
+    transparent: true,
+    depthWrite: false
+  });
+  scene.add(new THREE.Points(g, starMat));
+}
+
+// 通用：径向渐变贴图（月晕、炭床余光）
+function radialTexture(size, stops) {
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const g = c.getContext('2d');
+  const grad = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  for (const [o, col] of stops) grad.addColorStop(o, col);
+  g.fillStyle = grad;
+  g.fillRect(0, 0, size, size);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+// 月亮（参考图：默认视角左上方，带月晕和云）+ 微弱月光
+const moonDir = new THREE.Vector3(-0.86, 0.22, -0.46).normalize();
+let moonLight;
+{
+  const moonPos = moonDir.clone().multiplyScalar(330);
+  const side = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), moonDir).normalize();
+
+  // 程序化月面贴图：基底噪声 + 月海暗斑 + 带亮缘的陨石坑
+  const moonTex = (() => {
+    const S = 512;
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = S;
+    const g = cv.getContext('2d');
+    const rng = mulberry32(77);
+    g.fillStyle = '#c9c9c4';
+    g.fillRect(0, 0, S, S);
+    for (let i = 0; i < 9000; i++) {
+      const l = (175 + rng() * 70) | 0;
+      g.fillStyle = `rgba(${l},${l},${l - 4},${0.10 + rng() * 0.12})`;
+      g.fillRect(rng() * S, rng() * S, 1 + rng() * 2.5, 1 + rng() * 2.5);
+    }
+    g.filter = 'blur(16px)';                       // 月海
+    for (let i = 0; i < 7; i++) {
+      g.fillStyle = `rgba(118,120,124,${0.35 + rng() * 0.25})`;
+      g.beginPath();
+      g.ellipse(rng() * S, rng() * S, 36 + rng() * 70, 26 + rng() * 50, rng() * 3, 0, 7);
+      g.fill();
+    }
+    for (let i = 0; i < 70; i++) {                 // 陨石坑：暗底 + 偏移亮缘
+      const x = rng() * S, y = rng() * S, r = 2.5 + rng() * rng() * 15;
+      g.filter = `blur(${Math.max(0.5, r * 0.12)}px)`;
+      g.fillStyle = `rgba(95,95,96,${0.32 + rng() * 0.22})`;
+      g.beginPath(); g.arc(x, y, r, 0, 7); g.fill();
+      g.strokeStyle = `rgba(235,235,228,${0.30 + rng() * 0.25})`;
+      g.lineWidth = Math.max(1, r * 0.22);
+      g.beginPath(); g.arc(x - r * 0.12, y - r * 0.12, r, -2.7, 0.5); g.stroke();
+    }
+    const t = new THREE.CanvasTexture(cv);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  })();
+
+  // 3D 月球：真实球体几何 + 按太阳方向的朗伯明暗（凸月相、明暗界线、暗面地照）
+  // 用相位角精确构造太阳方向：S = (月→地)·cosα + 切向·sinα
+  // α=138° → 受光面 (1+cosα)/2 ≈ 13%，标准蛾眉月，弯口朝画面左下
+  const PHASE = THREE.MathUtils.degToRad(138);
+  const tLit = new THREE.Vector3()
+    .addScaledVector(side, -0.94)        // 受光缘朝画面右侧
+    .setY(0.34)                          // 略偏上 → 月牙双角指向左下
+    .normalize();
+  tLit.addScaledVector(moonDir, -tLit.dot(moonDir)).normalize();   // 正交化到视线垂面
+  const sunDirW = moonDir.clone().multiplyScalar(-Math.cos(PHASE))
+    .addScaledVector(tLit, Math.sin(PHASE))
+    .normalize();
+  const moon = new THREE.Mesh(
+    new THREE.SphereGeometry(11, 48, 48),
+    new THREE.ShaderMaterial({
+      uniforms: {
+        uMap: { value: moonTex },
+        uSunDir: { value: sunDirW }
+      },
+      vertexShader: /* glsl */`
+        varying vec3 vNormal;
+        varying vec2 vUv;
+        void main() {
+          vNormal = normalize(mat3(modelMatrix) * normal);
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }`,
+      fragmentShader: /* glsl */`
+        varying vec3 vNormal;
+        varying vec2 vUv;
+        uniform sampler2D uMap;
+        uniform vec3 uSunDir;
+        void main() {
+          float d = clamp(dot(normalize(vNormal), uSunDir), 0.0, 1.0);
+          float l = 0.06 + 2.1 * d;                // 0.06 ≈ 地照："新月抱旧月"的暗面微光
+          vec3 col = texture2D(uMap, vUv).rgb * l;
+          gl_FragColor = vec4(col, 1.0);
+          #include <tonemapping_fragment>
+          #include <colorspace_fragment>
+        }`
+    })
+  );
+  moon.position.copy(moonPos);
+  moon.rotation.y = 1.6;
+  scene.add(moon);
+
+  // 月晕
+  const halo = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: radialTexture(128, [
+      [0, 'rgba(190,210,255,0.35)'], [0.25, 'rgba(150,175,230,0.14)'], [1, 'rgba(120,150,210,0)']
+    ]),
+    transparent: true, depthWrite: false, fog: false, blending: THREE.AdditiveBlending
+  }));
+  halo.position.copy(moonPos);
+  halo.scale.setScalar(78);
+  scene.add(halo);
+
+  // 月旁的云（柔和椭圆叠加的画布贴图）
+  const cloudTex = (() => {
+    const c = document.createElement('canvas');
+    c.width = 256; c.height = 128;
+    const g = c.getContext('2d');
+    g.filter = 'blur(13px)';
+    const rng = mulberry32(31);
+    for (let i = 0; i < 10; i++) {
+      g.fillStyle = `rgba(255,255,255,${0.10 + rng() * 0.14})`;
+      g.beginPath();
+      g.ellipse(48 + rng() * 160, 42 + rng() * 44, 18 + rng() * 34, 9 + rng() * 13, 0, 0, 7);
+      g.fill();
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  })();
+  const rng = mulberry32(63);
+  for (let i = 0; i < 5; i++) {
+    const cl = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: cloudTex, color: 0x8ea3c8, transparent: true,
+      opacity: 0.35 + rng() * 0.3, depthWrite: false, fog: false
+    }));
+    cl.position.copy(moonPos)
+      .addScaledVector(side, (rng() - 0.45) * 170)
+      .add(new THREE.Vector3(0, (rng() - 0.55) * 55, 0));
+    cl.scale.set(120 + rng() * 90, 34 + rng() * 22, 1);
+    scene.add(cl);
+  }
+
+  moonLight = new THREE.DirectionalLight(0x91a8d0, 0.12);   // 月牙的环境月光更弱
+  moonLight.position.copy(moonDir).multiplyScalar(50);
+  scene.add(moonLight);
+
+  scene.add(new THREE.HemisphereLight(0x202c44, 0x0a0c08, 0.22));
+}
+
+// 远山剪影
+{
+  const rng = mulberry32(44);
+  const mat = new THREE.MeshBasicMaterial({ color: 0x0c1424 });
+  const moonAz = Math.atan2(moonDir.z, moonDir.x);
+  for (let i = 0; i < 14; i++) {
+    const a = Math.PI * 1.25 + (rng() - 0.5) * 2.6;
+    let h = 12 + rng() * 22;
+    // 月亮方位附近压低山体，避免挡月
+    const da = Math.abs(Math.atan2(Math.sin(a - moonAz), Math.cos(a - moonAz)));
+    if (da < 0.45) h = Math.min(h, 9);
+    const m = new THREE.Mesh(new THREE.ConeGeometry(26 + rng() * 30, h, 5), mat);
+    const d = 62 + rng() * 30;
+    m.position.set(Math.cos(a) * d, h / 2 - 0.5, Math.sin(a) * d);
+    m.rotation.y = rng() * Math.PI;
+    scene.add(m);
+  }
+}
+
+// 月光下的湖面（带倒影光带和碎波）
+{
+  const c = document.createElement('canvas');
+  c.width = c.height = 256;
+  const g = c.getContext('2d');
+  g.filter = 'blur(16px)';
+  g.fillStyle = '#1a3052';
+  g.beginPath(); g.ellipse(128, 128, 112, 96, 0, 0, 7); g.fill();
+  g.filter = 'blur(7px)';
+  g.fillStyle = 'rgba(180,205,255,0.45)';
+  g.beginPath(); g.ellipse(128, 138, 11, 86, 0, 0, 7); g.fill();
+  g.filter = 'blur(1.5px)';
+  const rng = mulberry32(12);
+  for (let i = 0; i < 26; i++) {
+    g.fillStyle = `rgba(190,215,255,${0.25 + rng() * 0.35})`;
+    g.fillRect(118 + (rng() - 0.5) * 44, 60 + rng() * 160, 6 + rng() * 16, 1.6);
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const lakeGroup = new THREE.Group();
+  lakeGroup.position.set(-24, 0.02, -38);
+  lakeGroup.rotation.y = 1.08;            // 倒影光带朝向月亮方位
+  const lake = new THREE.Mesh(
+    new THREE.CircleGeometry(17, 48),
+    new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false })
+  );
+  lake.rotation.x = -Math.PI / 2;
+  lake.scale.set(1.6, 1.15, 1);
+  lakeGroup.add(lake);
+  scene.add(lakeGroup);
+}
+
+// 松树
+function makeTree(x, z, s) {
+  const tree = new THREE.Group();
+  const trunk = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.12 * s, 0.18 * s, 1.2 * s, 8),
+    new THREE.MeshStandardMaterial({ color: 0x241710, roughness: 1 })
+  );
+  trunk.position.y = 0.6 * s;
+  trunk.castShadow = true;
+  tree.add(trunk);
+  const leafMat = new THREE.MeshStandardMaterial({ color: 0x0d2015, roughness: 1 });
+  for (let i = 0; i < 3; i++) {
+    const cone = new THREE.Mesh(new THREE.ConeGeometry((1.1 - i * 0.26) * s, 1.5 * s, 9), leafMat);
+    cone.position.y = (1.2 + i * 0.85) * s;
+    cone.castShadow = true;
+    cone.receiveShadow = true;
+    tree.add(cone);
+  }
+  tree.position.set(x, 0, z);
+  tree.rotation.y = Math.random() * Math.PI * 2;
+  scene.add(tree);
+}
+{
+  const rng = mulberry32(7);
+  const LAKE_AZ = Math.atan2(-38, -24);   // 默认视角正对湖面的方位
+  for (let i = 0; i < 14; i++) {
+    let a = rng() * Math.PI * 2;
+    const r = 9 + rng() * 18;
+    // 让出朝湖面/月亮的视野走廊（参考图中树木只在画面两侧）
+    const d = Math.atan2(Math.sin(a - LAKE_AZ), Math.cos(a - LAKE_AZ));
+    if (Math.abs(d) < 0.6) a = LAKE_AZ + Math.sign(d || 1) * (0.6 + rng() * 0.25);
+    makeTree(Math.cos(a) * r, Math.sin(a) * r, 0.8 + rng() * 1.4);
+  }
+}
+
+// 简单可复现的随机数（树木布局固定）
+function mulberry32(seed) {
+  return function () {
+    seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/* ============================================================
+   篝火：石圈、木柴、火光
+   ============================================================ */
+const fireGroup = new THREE.Group();
+scene.add(fireGroup);
+const FIRE_POS = new THREE.Vector3(0, 0.55, 0);   // 火焰声学/光学中心
+
+// 石圈：更大更圆、紧密围合（参考图）
+{
+  const rockMat = new THREE.MeshStandardMaterial({ color: 0x736b60, roughness: 0.95 });
+  const rng = mulberry32(21);
+  const n = 14;
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2 + (rng() - 0.5) * 0.18;
+    const rock = new THREE.Mesh(new THREE.IcosahedronGeometry(0.19 + rng() * 0.1, 1), rockMat);
+    rock.position.set(Math.cos(a) * 0.98, 0.1, Math.sin(a) * 0.98);
+    rock.rotation.set(rng() * 3, rng() * 3, rng() * 3);
+    rock.scale.set(1 + rng() * 0.3, 0.72, 1);
+    rock.castShadow = true;
+    rock.receiveShadow = true;
+    fireGroup.add(rock);
+  }
+}
+
+// 木柴：放射状围成圆锥（俯视呈辐条状、正视呈帐篷状），内端炭化发光
+let charMat, barkMat;
+{
+  barkMat = new THREE.MeshStandardMaterial({ color: 0x33200f, roughness: 0.95 });
+  charMat = new THREE.MeshStandardMaterial({
+    color: 0x140a05, emissive: 0xff4a10, emissiveIntensity: 1.4, roughness: 1
+  });
+  const rng = mulberry32(8);
+  const n = 8;
+  const up = new THREE.Vector3(0, 1, 0);
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2 + (rng() - 0.5) * 0.25;
+    const rOut = 0.62 + rng() * 0.06;
+    const outer = new THREE.Vector3(Math.cos(a) * rOut, 0.11, Math.sin(a) * rOut);
+    const inner = new THREE.Vector3(Math.cos(a) * 0.05, 0.40 + rng() * 0.10, Math.sin(a) * 0.05);
+    const dir = inner.clone().sub(outer);
+    const len = dir.length();
+    const radius = 0.062 + rng() * 0.022;
+    const log = new THREE.Group();
+    log.position.copy(outer);
+    log.quaternion.setFromUnitVectors(up, dir.normalize());
+    const bark = new THREE.Mesh(new THREE.CylinderGeometry(radius * 0.8, radius, len, 8), barkMat);
+    bark.position.y = len / 2;
+    bark.castShadow = true;
+    log.add(bark);
+    // 靠近火心的一段烧成炭并发光
+    const char = new THREE.Mesh(new THREE.CylinderGeometry(radius * 0.84, radius * 1.02, len * 0.38, 8), charMat);
+    char.position.y = len * 0.78;
+    log.add(char);
+    fireGroup.add(log);
+  }
+}
+
+// 红炭床：铺满石圈内部的炽热煤块，各自独立脉动（参考图俯视效果）
+const emberBed = [];
+{
+  const rng = mulberry32(5);
+  for (let i = 0; i < 46; i++) {
+    const rr = 0.66 * Math.sqrt(rng());
+    const a = rng() * Math.PI * 2;
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0x140803, roughness: 1,
+      emissive: new THREE.Color().setHSL(0.03 + rng() * 0.05, 1.0, 0.42 + rng() * 0.14),
+      emissiveIntensity: 0.9 + rng() * 1.6
+    });
+    const c = new THREE.Mesh(new THREE.IcosahedronGeometry(0.034 + rng() * 0.05, 0), mat);
+    c.position.set(Math.cos(a) * rr, 0.025 + rng() * 0.045, Math.sin(a) * rr);
+    c.rotation.set(rng() * 3, rng() * 3, rng() * 3);
+    c.scale.y = 0.55;
+    fireGroup.add(c);
+    emberBed.push({ mat, base: mat.emissiveIntensity, phase: rng() * 6.28, speed: 1.5 + rng() * 3 });
+  }
+}
+
+// 炭床的整体余光（叠加混合的径向光斑）
+const emberGlow = new THREE.Mesh(
+  new THREE.CircleGeometry(0.95, 40),
+  new THREE.MeshBasicMaterial({
+    map: radialTexture(128, [
+      [0, 'rgba(255,120,30,0.65)'], [0.45, 'rgba(255,70,12,0.28)'], [1, 'rgba(255,40,0,0)']
+    ]),
+    transparent: true, blending: THREE.AdditiveBlending, depthWrite: false
+  })
+);
+emberGlow.rotation.x = -Math.PI / 2;
+emberGlow.position.y = 0.02;
+fireGroup.add(emberGlow);
+
+// 火光：decay = 2 → 光照强度服从平方反比定律（物理正确）
+// 投影光源平滑跟随火焰发光质心：火焰粒子受风力作用，
+// 风越大火越斜、影子摆动越大；无风时质心稳定、影子稳定
+const fireLight = new THREE.PointLight(0xff7a28, 65, 0, 2);
+fireLight.position.copy(FIRE_POS);
+fireLight.castShadow = true;
+fireLight.shadow.mapSize.set(2048, 2048);
+fireLight.shadow.camera.near = 0.2;
+fireLight.shadow.camera.far = 35;
+fireLight.shadow.bias = -0.005;
+fireLight.shadow.normalBias = 0.04;
+fireGroup.add(fireLight);
+
+/* ============================================================
+   粒子着色器（火焰 / 火星 / 烟共用，程序化圆形光斑）
+   ============================================================ */
+function makeParticleMaterial(softness, blending) {
+  return new THREE.ShaderMaterial({
+    uniforms: { uScale: { value: 1 } },
+    vertexShader: /* glsl */`
+      attribute float aSize;
+      attribute vec3  aColor;
+      attribute float aAlpha;
+      varying vec3 vColor;
+      varying float vAlpha;
+      uniform float uScale;
+      void main() {
+        vColor = aColor;
+        vAlpha = aAlpha;
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        gl_PointSize = aSize * uScale / max(0.1, -mv.z);
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: /* glsl */`
+      varying vec3 vColor;
+      varying float vAlpha;
+      void main() {
+        float d = length(gl_PointCoord - 0.5);
+        float a = smoothstep(0.5, ${softness}, d) * vAlpha;
+        if (a < 0.003) discard;
+        gl_FragColor = vec4(vColor, a);
+      }`,
+    transparent: true,
+    depthWrite: false,
+    blending
+  });
+}
+
+function makeParticleSystem(count, softness, blending) {
+  const g = new THREE.BufferGeometry();
+  const pos = new Float32Array(count * 3);
+  const col = new Float32Array(count * 3);
+  const sz  = new Float32Array(count);
+  const al  = new Float32Array(count);
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('aColor',   new THREE.BufferAttribute(col, 3));
+  g.setAttribute('aSize',    new THREE.BufferAttribute(sz, 1));
+  g.setAttribute('aAlpha',   new THREE.BufferAttribute(al, 1));
+  const mat = makeParticleMaterial(softness, blending);
+  const points = new THREE.Points(g, mat);
+  points.frustumCulled = false;
+  scene.add(points);
+  return { g, pos, col, sz, al, mat, points };
+}
+
+function updateScales() {
+  // 把粒子的"世界尺寸"换算到屏幕像素：size * (h / 2tan(fov/2)) / z
+  const s = renderer.domElement.height / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
+  for (const ps of [flameSys, sparkSys, smokeSys]) ps.mat.uniforms.uScale.value = s;
+}
+
+/* ============================================================
+   火焰粒子 —— 三层焰体（焰底蓝光 / 内焰白黄核心 / 外焰橙红焰膜）
+   热浮力上升 + 空气阻力 + 向轴心收束 + 湍流
+   ============================================================ */
+const FLAME_N = 340;
+const flameSys = makeParticleSystem(FLAME_N, '0.04', THREE.AdditiveBlending);
+
+// 三层焰体结构（参照真实火焰分层）：
+// 0 内焰——贴近轴心的白黄明亮核心（炽热碳粒发光，亮度最高）
+// 1 外焰——包络核心的橙红半透明焰膜（完全燃烧区，发光弱、升得高、受风大）
+// 2 焰底——木柴间隙的幽蓝一次燃烧区（短寿命、贴地、微弱）
+const FLAME_LAYERS = [
+  { buoy: 0.95, converge: 3.6, windK: 1.0, turbK: 0.7, alphaK: 1.00, size: 0.30 },
+  { buoy: 1.00, converge: 1.9, windK: 1.8, turbK: 1.3, alphaK: 0.26, size: 0.55 },
+  { buoy: 0.45, converge: 2.6, windK: 0.6, turbK: 0.4, alphaK: 0.22, size: 0.30 }
+];
+// 外焰透明度刻意压低：叠加混合下不透明度过高会累积饱和成黄白，
+// 把橙红色相全部冲掉，层次就消失了
+const FLAME_RAMPS = [
+  // 内焰：白热 → 明黄 → 橙
+  [[0.00, 1.00, 1.00, 0.88], [0.40, 1.00, 0.86, 0.42], [0.75, 1.00, 0.60, 0.14], [1.00, 0.80, 0.30, 0.04]],
+  // 外焰：橙 → 深红 → 暗熄（绿分量低，叠加后仍保持红橙色相）
+  [[0.00, 1.00, 0.50, 0.10], [0.35, 0.95, 0.30, 0.04], [0.70, 0.65, 0.12, 0.015], [1.00, 0.18, 0.02, 0.00]],
+  // 焰底：幽蓝
+  [[0.00, 0.30, 0.50, 1.00], [0.55, 0.18, 0.32, 0.85], [1.00, 0.05, 0.10, 0.35]]
+];
+
+const flames = [];
+for (let i = 0; i < FLAME_N; i++) flames.push(spawnFlame({}, Math.random()));
+// 火焰的发光质心：投影光源跟随它，影子随风摆动
+const flameCentroid = new THREE.Vector3().copy(FIRE_POS);
+
+function spawnFlame(p, lifeFrac = 0) {
+  const u = Math.random();
+  p.layer = u < 0.42 ? 0 : (u < 0.93 ? 1 : 2);
+  const a = Math.random() * Math.PI * 2;
+  if (p.layer === 0) {                       // 内焰：窄核心柱（升不高，留出红色焰尖）
+    const r = 0.10 * Math.sqrt(Math.random());
+    p.x = Math.cos(a) * r; p.z = Math.sin(a) * r;
+    p.y = 0.14 + Math.random() * 0.2;
+    p.vy = 0.8 + Math.random() * 0.6;
+    p.maxLife = 0.3 + Math.random() * 0.35;
+  } else if (p.layer === 1) {                // 外焰：环形包络，升得更高
+    const r = 0.15 + 0.20 * Math.sqrt(Math.random());
+    p.x = Math.cos(a) * r; p.z = Math.sin(a) * r;
+    p.y = 0.08 + Math.random() * 0.26;
+    p.vy = 0.7 + Math.random() * 1.1;
+    p.maxLife = 0.7 + Math.random() * 0.95;
+  } else {                                   // 焰底：贴地蓝光环
+    const r = 0.16 + 0.16 * Math.random();
+    p.x = Math.cos(a) * r; p.z = Math.sin(a) * r;
+    p.y = 0.05 + Math.random() * 0.08;
+    p.vy = 0.25 + Math.random() * 0.35;
+    p.maxLife = 0.3 + Math.random() * 0.3;
+  }
+  p.vx = (Math.random() - 0.5) * 0.25;
+  p.vz = (Math.random() - 0.5) * 0.25;
+  p.life = lifeFrac * p.maxLife;
+  p.seed = Math.random() * 100;
+  return p;
+}
+
+// 按层取色：f 为归一化生命（温度冷却进度）
+function flameColor(f, ramp, out) {
+  for (let i = 0; i < ramp.length - 1; i++) {
+    if (f <= ramp[i + 1][0]) {
+      const t = (f - ramp[i][0]) / (ramp[i + 1][0] - ramp[i][0]);
+      out[0] = ramp[i][1] + (ramp[i + 1][1] - ramp[i][1]) * t;
+      out[1] = ramp[i][2] + (ramp[i + 1][2] - ramp[i][2]) * t;
+      out[2] = ramp[i][3] + (ramp[i + 1][3] - ramp[i][3]) * t;
+      return;
+    }
+  }
+}
+
+const _c = [0, 0, 0];
+function updateFlames(dt, t, flick) {
+  const BUOY = P.buoyancy, DRAG = 1.3;
+  let fcx = 0, fcy = 0, fcz = 0, fw = 0;
+  for (let i = 0; i < FLAME_N; i++) {
+    const p = flames[i];
+    p.life += dt;
+    if (p.life >= p.maxLife) spawnFlame(p);
+    const f = p.life / p.maxLife;
+    const L = FLAME_LAYERS[p.layer];
+
+    p.vy += BUOY * L.buoy * (1.0 - 0.55 * f) * dt;             // 热气浮升力（随冷却减弱）
+    const k = Math.max(0, 1 - DRAG * dt);                       // 空气阻力
+    p.vx *= k; p.vy *= k; p.vz *= k;
+    const turb = 1.5 * L.turbK;                                 // 外焰湍流强、内焰平稳
+    p.vx += Math.sin(t * 3.1 + p.seed * 1.7 + p.y * 2.2) * turb * dt;
+    p.vz += Math.cos(t * 2.6 + p.seed * 2.3 + p.y * 2.2) * turb * dt;
+    p.vx += windNow * 1.4 * L.windK * dt;                       // 外层焰膜受风更明显
+    p.vx += -p.x * L.converge * dt;                             // 内焰强收束成窄核心柱
+    p.vz += -p.z * L.converge * dt;
+    p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
+
+    flameSys.pos[i*3] = p.x; flameSys.pos[i*3+1] = p.y; flameSys.pos[i*3+2] = p.z;
+    flameColor(f, FLAME_RAMPS[p.layer], _c);
+    flameSys.col[i*3] = _c[0]; flameSys.col[i*3+1] = _c[1]; flameSys.col[i*3+2] = _c[2];
+    flameSys.sz[i] = (L.size * (1 - 0.72 * f) + 0.05) * (0.85 + 0.3 * flick) * (0.55 + 0.45 * fireDrive);
+    flameSys.al[i] = Math.pow(Math.sin(Math.PI * Math.min(1, f * 1.15)), 0.7) * 0.85 * L.alphaK;
+    // 内焰最亮，对发光质心的贡献最大
+    const wgt = flameSys.al[i] * (1.2 - f) * (p.layer === 0 ? 1.5 : p.layer === 1 ? 0.7 : 0.15);
+    fcx += p.x * wgt; fcy += p.y * wgt; fcz += p.z * wgt; fw += wgt;
+  }
+  if (fw > 1e-3) flameCentroid.set(fcx / fw, fcy / fw, fcz / fw);
+  flameSys.g.attributes.position.needsUpdate = true;
+  flameSys.g.attributes.aColor.needsUpdate = true;
+  flameSys.g.attributes.aSize.needsUpdate = true;
+  flameSys.g.attributes.aAlpha.needsUpdate = true;
+}
+
+/* ============================================================
+   火星 —— 重力 + 空气阻力 + 近火处的热上升气流（羽流）
+   ============================================================ */
+const SPARK_N = 130;
+const sparkSys = makeParticleSystem(SPARK_N, '0.15', THREE.AdditiveBlending);
+const sparks = [];
+for (let i = 0; i < SPARK_N; i++) sparks.push({ alive: false, life: 0, maxLife: 1 });
+let sparkAcc = 0;
+
+function spawnSpark(p, o) {
+  p.alive = true;
+  if (o) {                                   // 指定起点（加柴落点的迸溅）
+    p.x = o.x + (Math.random() - 0.5) * 0.22;
+    p.y = o.y + Math.random() * 0.15;
+    p.z = o.z + (Math.random() - 0.5) * 0.22;
+  } else {
+    p.x = (Math.random() - 0.5) * 0.3;
+    p.y = 0.3 + Math.random() * 0.5;
+    p.z = (Math.random() - 0.5) * 0.3;
+  }
+  const a = Math.random() * Math.PI * 2;
+  const lat = (0.2 + Math.random() * 0.8) * (o ? 1.7 : 1);
+  p.vx = Math.cos(a) * lat;
+  p.vy = (1.5 + Math.random() * 2.8) * (o ? 1.25 : 1);
+  p.vz = Math.sin(a) * lat;
+  p.life = 0;
+  p.maxLife = 0.8 + Math.random() * 1.6;
+  p.seed = Math.random() * 100;
+}
+
+function updateSparks(dt, t, flick) {
+  const G = -9.8, DRAG = 0.45;
+  // 加柴落点的火星迸溅
+  while (burstQueue.length) {
+    const b = burstQueue.pop();
+    for (let k = 0; k < b.n; k++) {
+      const p = sparks.find(s => !s.alive);
+      if (!p) break;
+      spawnSpark(p, b);
+    }
+  }
+  sparkAcc += dt * P.sparkRate * (0.6 + 0.8 * flick) * (1 + 0.5 * fuel); // 火越旺，迸出的火星越多
+  while (sparkAcc >= 1) {
+    sparkAcc -= 1;
+    const p = sparks.find(s => !s.alive);
+    if (p) spawnSpark(p);
+  }
+  for (let i = 0; i < SPARK_N; i++) {
+    const p = sparks[i];
+    if (!p.alive) { sparkSys.al[i] = 0; continue; }
+    p.life += dt;
+    const f = p.life / p.maxLife;
+    if (f >= 1 || (p.y < 0.03 && p.vy < 0)) { p.alive = false; sparkSys.al[i] = 0; continue; }
+
+    const plume = 11 * Math.exp(-p.y / 1.1);          // 热羽流升力随高度指数衰减
+    p.vy += (G + plume) * dt;                          // 重力 + 上升气流
+    const k = Math.max(0, 1 - DRAG * dt);              // 空气阻力
+    p.vx *= k; p.vy *= k; p.vz *= k;
+    p.vx += Math.sin(t * 5 + p.seed) * 0.6 * dt;       // 气流扰动
+    p.vz += Math.cos(t * 4 + p.seed) * 0.6 * dt;
+    p.vx += windNow * 0.9 * dt;                        // 阵风吹偏火星
+    p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
+
+    sparkSys.pos[i*3] = p.x; sparkSys.pos[i*3+1] = p.y; sparkSys.pos[i*3+2] = p.z;
+    const cool = 1 - f;                                // 余烬冷却变暗变红
+    sparkSys.col[i*3] = 1.0; sparkSys.col[i*3+1] = 0.35 + 0.45 * cool; sparkSys.col[i*3+2] = 0.05 + 0.18 * cool;
+    sparkSys.sz[i] = 0.035 + 0.03 * cool;
+    sparkSys.al[i] = cool * (0.55 + 0.45 * Math.sin(t * 35 + p.seed * 9));   // 闪烁
+  }
+  sparkSys.g.attributes.position.needsUpdate = true;
+  sparkSys.g.attributes.aColor.needsUpdate = true;
+  sparkSys.g.attributes.aSize.needsUpdate = true;
+  sparkSys.g.attributes.aAlpha.needsUpdate = true;
+}
+
+/* ============================================================
+   烟 —— 缓慢上升、受风漂移、膨胀消散
+   ============================================================ */
+const SMOKE_N = 55;
+const smokeSys = makeParticleSystem(SMOKE_N, '0.42', THREE.NormalBlending);
+const smokes = [];
+for (let i = 0; i < SMOKE_N; i++) smokes.push({ alive: false });
+let smokeAcc = 0;
+const WIND = new THREE.Vector3(0.22, 0, 0.08);
+
+function spawnSmoke(p) {
+  p.alive = true;
+  p.x = (Math.random() - 0.5) * 0.25;
+  p.y = 0.9 + Math.random() * 0.3;
+  p.z = (Math.random() - 0.5) * 0.25;
+  p.vx = (Math.random() - 0.5) * 0.1;
+  p.vy = 0.55 + Math.random() * 0.35;
+  p.vz = (Math.random() - 0.5) * 0.1;
+  p.life = 0;
+  p.maxLife = 3.2 + Math.random() * 2.2;
+  p.seed = Math.random() * 100;
+}
+
+function updateSmoke(dt, t) {
+  WIND.set(windNow, 0, windNow * 0.36);
+  // 刚投入未引燃的湿柴大量冒烟（fuelTarget 与 fuel 的差代表闷烧中的新柴）
+  smokeAcc += dt * P.smokeRate * (1 + 0.35 * fuel + 1.3 * Math.max(0, fuelTarget - fuel));
+  while (smokeAcc >= 1) {
+    smokeAcc -= 1;
+    const p = smokes.find(s => !s.alive);
+    if (p) spawnSmoke(p);
+  }
+  for (let i = 0; i < SMOKE_N; i++) {
+    const p = smokes[i];
+    if (!p.alive) { smokeSys.al[i] = 0; continue; }
+    p.life += dt;
+    const f = p.life / p.maxLife;
+    if (f >= 1) { p.alive = false; smokeSys.al[i] = 0; continue; }
+
+    p.vx += (WIND.x - p.vx) * 0.4 * dt;               // 风的拖拽使烟逐渐随风漂移
+    p.vz += (WIND.z - p.vz) * 0.4 * dt;
+    p.vx += Math.sin(t * 0.9 + p.seed) * 0.15 * dt;
+    p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
+
+    smokeSys.pos[i*3] = p.x; smokeSys.pos[i*3+1] = p.y; smokeSys.pos[i*3+2] = p.z;
+    const warm = Math.max(0, 1 - f * 3);              // 底部的烟被火从下方微微照亮
+    smokeSys.col[i*3] = 0.30 + 0.25 * warm;
+    smokeSys.col[i*3+1] = 0.29 + 0.12 * warm;
+    smokeSys.col[i*3+2] = 0.32 + 0.03 * warm;
+    smokeSys.sz[i] = 0.35 + f * 2.2;                  // 膨胀
+    smokeSys.al[i] = Math.min(f * 5, 1) * (1 - f) * 0.16;
+  }
+  smokeSys.g.attributes.position.needsUpdate = true;
+  smokeSys.g.attributes.aColor.needsUpdate = true;
+  smokeSys.g.attributes.aSize.needsUpdate = true;
+  smokeSys.g.attributes.aAlpha.needsUpdate = true;
+}
+
+updateScales();
+
+/* ============================================================
+   加柴交互：木柴抛物线飞入（重力 + 翻滚）→ 落点迸火星、冒烟、
+   闷响 → 燃料模型：先闷烧冒烟再引燃，~50s 烧尽
+   ============================================================ */
+const addedLogs = [];
+const burstQueue = [];
+let fuel = 0;            // 已引燃的燃料（驱动火势）
+let fuelTarget = 0;      // 投入的燃料总量（含闷烧中的新柴）
+let fireDrive = 1;       // P.fireScale × 燃料加成，每帧更新
+let crackleBoostUntil = 0;
+
+function tossLog() {
+  // 柴堆上限：先移除最旧的一根已落定的柴
+  if (addedLogs.length >= 5) {
+    const idx = addedLogs.findIndex(o => o.state === 'rest');
+    if (idx >= 0) {
+      const old = addedLogs.splice(idx, 1)[0];
+      scene.remove(old.mesh);
+      old.mesh.geometry.dispose();
+    }
+  }
+  // 从镜头一侧抛入，抛物线命中火心附近
+  const dl = Math.hypot(camera.position.x, camera.position.z) || 1;
+  const sx = (camera.position.x / dl) * 2.6 + (Math.random() - 0.5) * 0.8;
+  const sz = (camera.position.z / dl) * 2.6 + (Math.random() - 0.5) * 0.8;
+  const sy = 1.05;
+  const tx = (Math.random() - 0.5) * 0.4, tz = (Math.random() - 0.5) * 0.4;
+  const ty = 0.30 + Math.random() * 0.12;
+  const T = 0.6 + Math.random() * 0.15;     // 飞行时间，反解初速度
+  const mesh = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.05, 0.062, 0.68 + Math.random() * 0.16, 8),
+    barkMat
+  );
+  mesh.castShadow = true;
+  mesh.position.set(sx, sy, sz);
+  scene.add(mesh);
+  addedLogs.push({
+    mesh, state: 'fly', restY: ty,
+    vel: new THREE.Vector3((tx - sx) / T, (ty - sy) / T + 4.9 * T, (tz - sz) / T),
+    spin: new THREE.Vector3((Math.random() - 0.5) * 9, (Math.random() - 0.5) * 5, (Math.random() - 0.5) * 9)
+  });
+}
+
+function updateAddedLogs(dt) {
+  for (const l of addedLogs) {
+    if (l.state !== 'fly') continue;
+    l.vel.y -= 9.8 * dt;                     // 重力
+    l.mesh.position.addScaledVector(l.vel, dt);
+    l.mesh.rotation.x += l.spin.x * dt;      // 翻滚
+    l.mesh.rotation.y += l.spin.y * dt;
+    l.mesh.rotation.z += l.spin.z * dt;
+    if (l.vel.y < 0 && l.mesh.position.y <= l.restY) landLog(l);
+  }
+}
+
+function landLog(l) {
+  l.state = 'rest';
+  l.mesh.position.y = l.restY;
+  // 随机一个近水平的安放姿态
+  const yaw = Math.random() * Math.PI * 2;
+  l.mesh.quaternion.setFromUnitVectors(
+    new THREE.Vector3(0, 1, 0),
+    new THREE.Vector3(Math.cos(yaw), (Math.random() - 0.5) * 0.5, Math.sin(yaw)).normalize()
+  );
+  fuelTarget = Math.min(4, fuelTarget + 1);
+  // 落点特效：火星迸溅 + 烟尘
+  burstQueue.push({ x: l.mesh.position.x, y: l.restY + 0.1, z: l.mesh.position.z, n: 24 });
+  for (let k = 0; k < 6; k++) {
+    const s = smokes.find(o => !o.alive);
+    if (s) {
+      spawnSmoke(s);
+      s.x = l.mesh.position.x + (Math.random() - 0.5) * 0.2;
+      s.z = l.mesh.position.z + (Math.random() - 0.5) * 0.2;
+      s.y = l.restY + 0.15;
+    }
+  }
+  if (audio) {
+    audio.playThud();                                        // 闷响 + 湿柴嘶声
+    crackleBoostUntil = audio.ctx.currentTime + 2.5;         // 爆裂声高发期
+  }
+}
+
+// 每帧校验视口：窗口隐藏时浏览器报告 0 尺寸且恢复可见不一定触发 resize 事件
+let viewW = -1, viewH = -1;
+function fitViewport() {
+  const w = innerWidth, h = innerHeight;
+  if (w === viewW && h === viewH) return;
+  if (w < 2 || h < 2) return;
+  viewW = w; viewH = h;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h);
+  updateScales();
+}
+fitViewport();
+
+/* ============================================================
+   声音 —— 全部程序化合成，符合物理规律：
+   · PositionalAudio + distanceModel 'inverse'：振幅 ∝ 1/r（声强 ∝ 1/r²）
+   · HRTF 双耳定位：转动镜头时左右声像随之变化
+   · 空气对高频的吸收：距离越远，低通截止频率越低（声音越闷）
+   · 音源 = 棕噪声轰鸣 + 带通嘶声 + 泊松过程随机触发的噼啪爆裂
+   ============================================================ */
+const listener = new THREE.AudioListener();
+camera.add(listener);
+
+const fireSound = new THREE.PositionalAudio(listener);
+fireSound.position.copy(FIRE_POS);
+fireGroup.add(fireSound);
+
+let audio = null;   // 启动后保存所有需要逐帧更新的音频节点
+
+function makeNoiseBuffer(ctx, seconds, brown) {
+  const n = Math.floor(seconds * ctx.sampleRate);
+  const buf = ctx.createBuffer(1, n, ctx.sampleRate);
+  const d = buf.getChannelData(0);
+  let last = 0;
+  for (let i = 0; i < n; i++) {
+    const w = Math.random() * 2 - 1;
+    if (brown) { last = (last + 0.02 * w) / 1.02; d[i] = last * 3.5; }
+    else d[i] = w;
+  }
+  return buf;
+}
+
+// 短促的爆裂声样本：白噪声 × 锐利指数衰减包络
+function makeCrackleBuffer(ctx) {
+  const dur = 0.025 + Math.random() * 0.05;
+  const n = Math.floor(dur * ctx.sampleRate);
+  const buf = ctx.createBuffer(1, n, ctx.sampleRate);
+  const d = buf.getChannelData(0);
+  const k = 6 + Math.random() * 10;
+  for (let i = 0; i < n; i++) {
+    d[i] = (Math.random() * 2 - 1) * Math.exp(-k * i / n * 4);
+  }
+  return buf;
+}
+
+function startAudio() {
+  const ctx = listener.context;
+  ctx.resume();
+  listener.setMasterVolume(P.masterVol);
+
+  // —— 定位声源参数（物理衰减模型）——
+  fireSound.setRefDistance(2);          // 2 m 处为参考响度
+  fireSound.setRolloffFactor(P.rolloff);
+  fireSound.setDistanceModel('inverse');
+  fireSound.panner.panningModel = 'HRTF';
+
+  // 火焰总线 → 空气吸收低通 → 3D 定位面板
+  const fireMix = ctx.createGain();
+  fireMix.gain.value = 1.0;
+  const airFilter = ctx.createBiquadFilter();
+  airFilter.type = 'lowpass';
+  airFilter.frequency.value = 12000;
+  fireMix.connect(airFilter);
+  fireSound.setNodeSource(airFilter);
+
+  // 1) 低频轰鸣：棕噪声 + 低通
+  const roarSrc = ctx.createBufferSource();
+  roarSrc.buffer = makeNoiseBuffer(ctx, 8, true);
+  roarSrc.loop = true;
+  const roarLP = ctx.createBiquadFilter();
+  roarLP.type = 'lowpass'; roarLP.frequency.value = 380; roarLP.Q.value = 0.5;
+  const roarGain = ctx.createGain();
+  roarGain.gain.value = 0.5;
+  roarSrc.connect(roarLP).connect(roarGain).connect(fireMix);
+  roarSrc.start();
+
+  // 2) 嘶嘶声：白噪声 + 带通，缓慢起伏
+  const hissSrc = ctx.createBufferSource();
+  hissSrc.buffer = makeNoiseBuffer(ctx, 6, false);
+  hissSrc.loop = true;
+  const hissBP = ctx.createBiquadFilter();
+  hissBP.type = 'bandpass'; hissBP.frequency.value = 2600; hissBP.Q.value = 0.8;
+  const hissGain = ctx.createGain();
+  hissGain.gain.value = 0.05;
+  hissSrc.connect(hissBP).connect(hissGain).connect(fireMix);
+  hissSrc.start();
+  const hissLFO = ctx.createOscillator();
+  hissLFO.frequency.value = 0.23;
+  const hissLFOGain = ctx.createGain();
+  hissLFOGain.gain.value = 0.022;
+  hissLFO.connect(hissLFOGain).connect(hissGain.gain);
+  hissLFO.start();
+
+  // 3) 噼啪爆裂：泊松过程调度，随机音高/响度/频段
+  const crackleVariants = Array.from({ length: 6 }, () => makeCrackleBuffer(ctx));
+  let nextCrackle = ctx.currentTime + 0.1;
+  function scheduleCrackles() {
+    const horizon = ctx.currentTime + 0.3;
+    // 刚加柴后的 2.5s 内爆裂声高发（拨动火堆会引发密集噼啪）
+    const rate = P.crackleRate * (ctx.currentTime < crackleBoostUntil ? 3 : 1);
+    if (rate < 0.1) { nextCrackle = horizon; return; }   // 滑到 0 时静音且不积压
+    while (nextCrackle < horizon) {
+      const src = ctx.createBufferSource();
+      src.buffer = crackleVariants[(Math.random() * crackleVariants.length) | 0];
+      src.playbackRate.value = 0.6 + Math.random() * 1.6;
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = 900 + Math.random() * 4200;
+      bp.Q.value = 0.9;
+      const g = ctx.createGain();
+      // 5% 概率出现响亮的爆裂声（真实篝火偶发的大噼啪）
+      g.gain.value = Math.random() < 0.05 ? 0.7 + Math.random() * 0.5 : 0.06 + Math.random() * 0.3;
+      src.connect(bp).connect(g).connect(fireMix);
+      src.start(nextCrackle);
+      src.stop(nextCrackle + 0.25);
+      // 指数分布的间隔 → 泊松过程，平均 rate 次/秒
+      nextCrackle += 0.02 + -Math.log(1 - Math.random()) / rate;
+    }
+  }
+  const crackleTimer = setInterval(scheduleCrackles, 120);
+
+  // 4) 环境风声（非定位，包围听者）：棕噪声 + 漂移的低通
+  const windAudio = new THREE.Audio(listener);
+  const windSrc = ctx.createBufferSource();
+  windSrc.buffer = makeNoiseBuffer(ctx, 10, true);
+  windSrc.loop = true;
+  const windLP = ctx.createBiquadFilter();
+  windLP.type = 'lowpass'; windLP.frequency.value = 240; windLP.Q.value = 0.6;
+  const windGain = ctx.createGain();
+  windGain.gain.value = 0.045;
+  windSrc.connect(windLP).connect(windGain);
+  windAudio.setNodeSource(windGain);
+  windSrc.start();
+  const windLFO = ctx.createOscillator();
+  windLFO.frequency.value = 0.06;
+  const windLFOGain = ctx.createGain();
+  windLFOGain.gain.value = 0.025;
+  windLFO.connect(windLFOGain).connect(windGain.gain);
+  windLFO.start();
+
+  // 5) 加柴音效：低频闷响 + 湿柴受热的嘶声短暂增强
+  const thudBuf = ctx.createBuffer(1, Math.floor(0.2 * ctx.sampleRate), ctx.sampleRate);
+  {
+    const d = thudBuf.getChannelData(0);
+    let last = 0;
+    for (let i = 0; i < d.length; i++) {
+      const wn = Math.random() * 2 - 1;
+      last = (last + 0.04 * wn) / 1.04;
+      d[i] = last * 6 * Math.exp(-i / d.length * 7);
+    }
+  }
+  const playThud = () => {
+    const src = ctx.createBufferSource();
+    src.buffer = thudBuf;
+    src.playbackRate.value = 0.85 + Math.random() * 0.3;
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass'; lp.frequency.value = 260;
+    const g = ctx.createGain();
+    g.gain.value = 1.4;
+    src.connect(lp).connect(g).connect(fireMix);
+    src.start();
+    const now = ctx.currentTime;
+    hissGain.gain.setTargetAtTime(0.16, now, 0.25);
+    hissGain.gain.setTargetAtTime(0.05, now + 1.2, 0.8);
+  };
+
+  audio = { ctx, roarGain, airFilter, crackleTimer, windGain, playThud };
+}
+
+/* ============================================================
+   启动遮罩
+   ============================================================ */
+const overlay = document.getElementById('overlay');
+overlay.addEventListener('click', () => {
+  if (!audio) startAudio();
+  overlay.classList.add('hidden');
+}, { once: true });
+
+/* ============================================================
+   主循环
+   ============================================================ */
+const clock = new THREE.Clock();
+const hud = document.getElementById('hud');
+let flick = 0.5;
+let lightFlick = 0.5;
+let windNow = 0.22;   // 瞬时风速（含阵风）
+let hudTimer = 0;
+
+function animate() {
+  requestAnimationFrame(animate);
+  step(Math.min(clock.getDelta(), 0.05), clock.elapsedTime);
+}
+
+function step(dt, t) {
+  fitViewport();
+  // 火光闪烁：随机游走 + 回归均值（驱动火焰/火星/声音的快速抖动）
+  flick += (Math.random() - 0.5) * dt * 14;
+  flick += (0.5 - flick) * dt * 5;
+  flick = Math.max(0, Math.min(1, flick));
+  // 燃料燃烧模型：新柴先闷烧（fuel 落后于 fuelTarget，期间大量冒烟），
+  // 引燃后火势增强，随后以 ~50s 时间常数缓慢烧尽
+  fuelTarget *= Math.exp(-dt / 50);
+  if (fuelTarget < 0.01) fuelTarget = 0;
+  fuel += (fuelTarget - fuel) * Math.min(1, dt * 0.45);
+  fireDrive = P.fireScale * (1 + 0.3 * fuel);
+  updateAddedLogs(dt);
+
+  // 投影光源只取低通平滑后的闪烁：亮度自然呼吸，影子位置稳定不晃
+  lightFlick += (flick - lightFlick) * Math.min(1, dt * 5);
+  fireLight.intensity = 62 * (0.72 + 0.42 * lightFlick) * fireDrive;
+
+  // 阵风：均值回归随机过程（OU），波动幅度与平均风速成正比。
+  // 恒定风只让火焰静态倾斜；阵风才让火焰和影子持续摆动
+  windNow += (P.wind - windNow) * 1.6 * dt + (Math.random() - 0.5) * P.wind * 3.5 * Math.sqrt(dt);
+  windNow = Math.max(0, Math.min(windNow, P.wind * 2.5 + 0.02));
+  charMat.emissiveIntensity = 1.0 + 1.2 * flick;
+  emberGlow.material.opacity = 0.55 + 0.45 * flick;
+  for (const e of emberBed) {
+    e.mat.emissiveIntensity = e.base * (0.55 + 0.45 * flick + 0.3 * Math.sin(t * e.speed + e.phase));
+  }
+
+  updateFlames(dt, t, flick);
+  updateSparks(dt, t, flick);
+  updateSmoke(dt, t);
+
+  // 影子随风摆动：光源低通跟随火焰质心（限幅防止极端偏移）
+  const kL = Math.min(1, dt * 4);
+  fireLight.position.x += (THREE.MathUtils.clamp(flameCentroid.x, -0.5, 0.5) - fireLight.position.x) * kL;
+  fireLight.position.y += (THREE.MathUtils.clamp(flameCentroid.y, 0.35, 1.0) - fireLight.position.y) * kL;
+  fireLight.position.z += (THREE.MathUtils.clamp(flameCentroid.z, -0.5, 0.5) - fireLight.position.z) * kL;
+
+  if (audio) {
+    // 火势与音量联动
+    audio.roarGain.gain.value = 0.42 * (0.75 + 0.5 * flick) * (0.45 + 0.55 * fireDrive);
+    // 阵风掠过时风声随之增强
+    audio.windGain.gain.value = Math.min(0.13, 0.025 + 0.055 * windNow);
+    // 空气吸收：高频随距离指数衰减
+    const d = camera.position.distanceTo(FIRE_POS);
+    const cutoff = 400 + 11600 * Math.exp(-d * P.airAbsorb / 30);
+    audio.airFilter.frequency.setTargetAtTime(cutoff, audio.ctx.currentTime, 0.1);
+  }
+
+  hudTimer += dt;
+  if (hudTimer > 0.25) {
+    hudTimer = 0;
+    const d = camera.position.distanceTo(FIRE_POS);
+    const fuelStr = fuelTarget > 0.05
+      ? ` · 燃料 +${fuelTarget.toFixed(1)}（火力 ×${(1 + 0.3 * fuel).toFixed(2)}）` : '';
+    hud.textContent =
+      `距火堆 r = ${d.toFixed(1)} m · 瞬时风速 ${windNow.toFixed(2)} m/s（均值 ${P.wind.toFixed(2)}）${fuelStr}\n` +
+      `声音衰减：振幅 ∝ 1/r（声强 ∝ 1/r²）· 高频被空气吸收\n` +
+      `光照衰减：decay = 2（平方反比定律）`;
+  }
+
+  starMat.uniforms.uTime.value = t;   // 星光闪烁
+
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+/* ============================================================
+   参数滑块面板
+   ============================================================ */
+{
+  // [显示名, P 中的键, min, max, step, 自定义应用函数?, 悬停提示?]
+  const groups = [
+    ['火 焰', [
+      ['火势', 'fireScale', 0.2, 2, 0.01],
+      ['热浮升力 (m/s²)', 'buoyancy', 0.5, 6, 0.1],
+      ['火星生成率 (个/s)', 'sparkRate', 0, 60, 1],
+      ['烟雾量 (个/s)', 'smokeRate', 0, 20, 0.5],
+      ['平均风速 (m/s)', 'wind', 0, 1.5, 0.01, null,
+        '瞬时风速按阵风模型围绕均值起伏，火焰与影子随之摆动']
+    ]],
+    ['声 音', [
+      ['总音量', 'masterVol', 0, 1, 0.01,
+        v => { P.masterVol = v; listener.setMasterVolume(v); }],
+      ['噼啪频率 (次/s)', 'crackleRate', 0, 15, 0.5],
+      ['距离衰减系数', 'rolloff', 0, 4, 0.05,
+        v => { P.rolloff = v; fireSound.setRolloffFactor(v); },
+        '1 = 物理真实的 1/r 衰减；越大衰减越快'],
+      ['空气高频吸收', 'airAbsorb', 0, 3, 0.05, null,
+        '距离越远高频损失越多；0 = 关闭']
+    ]],
+    ['环 境', [
+      ['月光强度', 'moonInt', 0, 0.6, 0.01,
+        v => { P.moonInt = v; moonLight.intensity = v; }],
+      ['雾浓度', 'fog', 0, 0.04, 0.001,
+        v => { P.fog = v; scene.fog.density = v; }],
+      ['曝光', 'exposure', 0.4, 2, 0.01,
+        v => { P.exposure = v; renderer.toneMappingExposure = v; }]
+    ]]
+  ];
+
+  const body = document.getElementById('panelBody');
+  for (const [gname, items] of groups) {
+    const h = document.createElement('div');
+    h.className = 'pgroup';
+    h.textContent = gname;
+    body.appendChild(h);
+    for (const [label, key, min, max, stp, apply, tip] of items) {
+      const row = document.createElement('label');
+      row.className = 'prow';
+      if (tip) row.title = tip;
+      const name = document.createElement('span');
+      name.className = 'pname';
+      name.textContent = label;
+      const val = document.createElement('span');
+      val.className = 'pval';
+      const input = document.createElement('input');
+      input.type = 'range';
+      input.min = min; input.max = max; input.step = stp; input.value = P[key];
+      const dec = stp >= 1 ? 0 : stp >= 0.1 ? 1 : stp >= 0.01 ? 2 : 3;
+      const show = v => { val.textContent = Number(v).toFixed(dec); };
+      show(P[key]);
+      input.addEventListener('input', () => {
+        const v = parseFloat(input.value);
+        (apply || (x => { P[key] = x; }))(v);
+        show(v);
+      });
+      row.append(name, val, input);
+      body.appendChild(row);
+    }
+  }
+
+  const panel = document.getElementById('panel');
+  const arrow = document.getElementById('panelArrow');
+  document.getElementById('panelHead').addEventListener('click', () => {
+    panel.classList.toggle('collapsed');
+    arrow.textContent = panel.classList.contains('collapsed') ? '▸' : '▾';
+  });
+}
+
+// 加柴按钮（短冷却防止连点刷屏）
+{
+  const btn = document.getElementById('addLog');
+  btn.addEventListener('click', () => {
+    tossLog();
+    btn.disabled = true;
+    setTimeout(() => { btn.disabled = false; }, 700);
+  });
+}
+
+// 调试钩子：在 rAF 被节流的环境（如隐藏窗口）中手动驱动帧
+window.__campfire = { renderer, scene, camera, step, P };
+
+addEventListener('resize', fitViewport);
+</script>
+</body>
+</html>
