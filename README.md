@@ -1,66 +1,182 @@
-# 夜间篝火 · Three.js
+# Campfire
 
-一个自包含的夜间篝火场景（单文件 `index.html`，three.js 从 CDN 加载，无需安装依赖）。
+<p align="center">
+  <a href="README.md">English</a> |
+  <a href="README.zh-CN.md">中文</a> |
+  <a href="README.ja.md">日本語</a>
+</p>
 
-## 运行
+A self-contained interactive night campfire scene built with Three.js.  
+The project runs from a single `index.html` file, with Three.js loaded from a CDN. No build step or dependency installation is required.
 
-由于使用了 ES Module，需要通过本地 HTTP 服务打开：
+---
 
-```powershell
+## Overview
+
+**Campfire** is an interactive browser-based campfire demo. It combines particle-based flames, sparks, smoke, moonlight, fog, simple weather controls, and procedural Web Audio to create a quiet nighttime camping atmosphere.
+
+It is suitable for learning and experimenting with:
+
+- Three.js scene construction
+- Particle-based flame, spark, and smoke effects
+- Procedural Web Audio synthesis
+- 3D positional sound and distance attenuation
+- Simple physical simulation
+- Real-time parameter control
+- Multilingual UI interaction
+
+---
+
+## Features
+
+### Night Campfire Scene
+
+The scene contains flames, logs, sparks, smoke, moonlight, fog, cloud cover, light rain, and a dark outdoor environment.
+
+### Real-time Parameter Panel
+
+The upper-right parameter panel provides real-time sliders for:
+
+- Flame intensity
+- Thermal buoyancy
+- Spark emission rate
+- Smoke amount
+- Wind speed
+- Master volume
+- Crackle frequency
+- Distance attenuation
+- High-frequency air absorption
+- Rain intensity
+- Cloud amount
+- Moon phase
+- Moonlight intensity
+- Fog density
+- Exposure
+
+All parameters take effect immediately.
+
+### Add Wood Interaction
+
+Clicking **Add Wood** throws a log into the campfire. The interaction includes:
+
+- Parabolic motion
+- Rolling animation
+- Spark burst
+- Smoke puff
+- 3D positional impact sound
+- Fuel increase
+- Stronger flame
+- Temporarily increased crackling sounds
+
+Fuel gradually burns down over time, and the fire slowly returns to its original state.
+
+### Campfire Interactions
+
+Four campfire interactions can run independently:
+
+- **Roast Marshmallow**: a marshmallow is held over the fire and gradually caramelizes.
+- **Boil Water**: a kettle is suspended above the flame and produces steam when heated.
+- **Light Torch**: a torch is lit by the fire and can be extinguished by clicking again.
+- **Throw Pinecone**: a pinecone lands in the fire, producing sparks and adding a small amount of fuel.
+
+### Trilingual UI
+
+The interface supports instant switching between:
+
+- Chinese
+- English
+- Japanese
+
+Buttons, status messages, and progress feedback update with the selected language.
+
+### Procedural Audio
+
+All sounds are generated in real time using the Web Audio API. No external audio files are required.
+
+Generated sounds include:
+
+- Low-frequency fire rumble
+- Wood crackling
+- Occasional loud pops
+- Log impact sound
+- Distance-based attenuation
+- Air absorption that makes distant fire sounds softer and darker
+
+---
+
+## How to Run
+
+Because this project uses ES Modules, open it through a local HTTP server.
+
+```bash
 python -m http.server 8341
-# 然后浏览器访问 http://localhost:8341
 ```
 
-进入页面后**点击任意处**开启声音（浏览器要求用户手势才能启动音频）。
-拖动旋转视角，滚轮缩放。
+Then visit:
 
-## 参数面板
+```text
+http://localhost:8341
+```
 
-右上角「⚙ 参数调节」面板提供实时滑块（点击标题可折叠）：
+After entering the page, click anywhere to enable audio. Most browsers require a user gesture before Web Audio can start.
 
-- **火焰**：火势、热浮升力 (m/s²)、火星生成率、烟雾量、风速 (m/s)
-- **声音**：总音量、噼啪频率、距离衰减系数（1 = 物理真实的 1/r）、空气高频吸收
-- **天气**：细雨、云量、月相
-- **环境**：月光强度、雾浓度、画面曝光
+---
 
-所有参数即时生效——例如把「距离衰减系数」调大可以体验声音随距离衰减得更快，
-调风速可以看到火舌倾斜、火星和烟雾被吹偏。
+## Controls
 
-## 加柴交互
+| Action | Description |
+|---|---|
+| Drag mouse | Rotate camera |
+| Mouse wheel | Zoom in or out |
+| Click page | Start audio |
+| Click “Add Wood” | Add a log to the campfire |
+| Click interaction buttons | Roast marshmallow, boil water, light torch, or throw pinecone |
+| Adjust parameter panel | Change fire, audio, weather, and environment effects in real time |
 
-底部「🪵 加柴」按钮：木柴从镜头一侧抛物线飞入（重力 + 翻滚），落在柴堆上
-迸起火星、腾起烟尘、发出闷响（经 3D 定位衰减），随后进入燃料燃烧模型：
+---
 
-- **闷烧期**：新柴先大量冒烟（`fuelTarget` 与 `fuel` 的差驱动烟量）
-- **引燃**：约 2 秒后火力渐升，火焰、光照、轰鸣、火星率同步增强
-- **烧尽**：燃料以约 38 秒时间常数指数衰减，火势缓慢回落
-- 加柴后 2.5 秒内噼啪爆裂声高发（拨动火堆的真实反应）
-- 柴堆上限 5 根、燃料封顶 +6，左下 HUD 实时显示燃料与火力
+## Physical and Visual Simulation
 
-## 营火互动
+| Effect | Implementation |
+|---|---|
+| Distance-based sound attenuation | `PositionalAudio` with an inverse distance model |
+| Binaural positioning | HRTF spatial audio |
+| Air absorption | High frequencies decrease with distance |
+| Light falloff | Point light with inverse-square decay |
+| Flame motion | Thermal buoyancy, drag, turbulence, and inward force |
+| Flame layers | Blue base, bright yellow-white core, and orange-red outer flame |
+| Spark movement | Gravity, drag, and thermal plume lift |
+| Smoke diffusion | Upward movement, expansion, wind drift, and fade-out |
+| Crackling sound | Randomly scheduled short burst sounds |
+| Fire rumble | Low-frequency noise linked to flame intensity |
 
-加柴按钮上方提供四种可并行进行的互动：
+---
 
-- **烤棉花糖**：圆角柱形棉花糖随竹签斜向伸入火焰，表面随火势逐渐焦糖化；雨天或弱火会延长时间
-- **煮水**：搭起木制三脚吊架，将水壶悬在火焰上方；升温后出现蒸汽，沸腾后自动收回
-- **点燃火把**：缠布火把伸入火焰引燃并返回原位，火舌会随风摆动，再次点击可以熄灭
-- **投掷松果**：松果按抛物线落入火堆，迸出火星、烟雾并补充少量燃料
+## Project Structure
 
-按钮和进度反馈支持中文、英文、日文即时切换。
+```text
+Campfire/
+├── index.html
+├── README.md
+├── README.zh-CN.md
+├── README.ja.md
+├── assets/
+│   └── textures/
+├── scripts/
+└── .claude/
+```
 
-## 物理规律
+---
 
-| 现象 | 实现 |
-| --- | --- |
-| 声音随距离衰减 | `PositionalAudio` + `inverse` 距离模型：振幅 ∝ 1/r，即声强 ∝ 1/r²（平方反比定律） |
-| 双耳定位 | HRTF 头部相关传输函数，转动镜头时左右声像随之变化 |
-| 空气吸收高频 | 低通滤波器截止频率随距离指数下降，远处的火声更"闷" |
-| 火光衰减 | `PointLight` 的 `decay = 2`，光照强度服从平方反比定律 |
-| 火焰上升 | 热浮升力（随冷却减弱）+ 空气阻力 + 向轴心收束 + 湍流扰动 |
-| 焰体分层 | 三层结构：焰底幽蓝（一次燃烧区）→ 内焰白黄窄核心（炽热碳粒发光最亮）→ 外焰橙红半透明焰膜（升得更高、湍流和受风更强） |
-| 火星轨迹 | 重力 (−9.8 m/s²) + 空气阻力 + 热羽流升力（随高度指数衰减），落地熄灭 |
-| 烟雾飘散 | 慢速上升、风的拖拽、体积膨胀、逐渐消散 |
-| 噼啪声 | 泊松过程随机调度的爆裂声样本（白噪声 × 指数衰减包络），偶发响亮爆裂 |
-| 燃烧轰鸣 | 棕噪声低通滤波，音量与火光闪烁强度联动 |
+## Notes
 
-所有声音均由 Web Audio API 程序化合成，无外部音频文件。
+- This project is designed as a lightweight browser-based demo.
+- No build step is required.
+- Audio starts only after a user gesture because of browser autoplay policies.
+- For the best experience, use a modern desktop browser.
+
+---
+
+## License
+
+No license has been specified yet. If you plan to share or reuse this project publicly, consider adding a license such as MIT.
