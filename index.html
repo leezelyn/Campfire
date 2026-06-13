@@ -17,6 +17,11 @@
     transition: opacity 1.2s ease;
   }
   #overlay.hidden { opacity: 0; pointer-events: none; }
+  /* 启动遮罩期间隐藏操作 UI（参数面板 / HUD / 加柴按钮），进入后随遮罩淡出再淡入 */
+  #hud, #addLog, #panel { transition: opacity .9s ease .35s; }
+  #overlay:not(.hidden) ~ #hud,
+  #overlay:not(.hidden) ~ #addLog,
+  #overlay:not(.hidden) ~ #panel { opacity: 0; pointer-events: none; transition: none; }
   #overlay h1 { font-size: 42px; font-weight: 300; letter-spacing: .35em; margin: 0 0 18px; text-indent: .35em; }
   #overlay p  { font-size: 15px; color: #b8a98f; margin: 6px 0; letter-spacing: .1em; }
   #overlay .fire-icon { font-size: 64px; margin-bottom: 24px; animation: breathe 2.4s ease-in-out infinite; }
@@ -69,6 +74,24 @@
   #addLog:hover { background: rgba(60,32,12,.9); box-shadow: 0 0 18px rgba(255,140,40,.35); }
   #addLog:active { transform: translateX(-50%) scale(.94); }
   #addLog:disabled { opacity: .45; cursor: default; box-shadow: none; }
+
+  #langSwitch {
+    position: fixed; top: 14px; left: 16px; z-index: 11;   /* 高于启动遮罩，进入前也能切换语言 */
+    display: flex; gap: 6px;
+  }
+  #langSwitch button {
+    padding: 6px 11px; border-radius: 999px;
+    background: rgba(8,12,22,.84); color: #cfc2ab;
+    border: 1px solid rgba(255,160,70,.25);
+    font: 12px/1 "Segoe UI", system-ui, sans-serif; letter-spacing: .05em;
+    cursor: pointer; backdrop-filter: blur(6px);
+    transition: color .15s, background .15s, border-color .15s;
+  }
+  #langSwitch button:hover { color: #ffc890; }
+  #langSwitch button.active {
+    background: rgba(60,32,12,.9); color: #ffb46a;
+    border-color: rgba(255,160,70,.6);
+  }
 </style>
 <script type="importmap">
 {
@@ -83,14 +106,19 @@
 <div id="app"></div>
 <div id="overlay">
   <div class="fire-icon">🔥</div>
-  <h1>夜 间 篝 火</h1>
-  <p>点击任意处进入（开启声音）</p>
-  <p>拖动旋转 · 滚轮缩放 —— 远离篝火，声音按 1/r 衰减</p>
+  <h1 id="ovTitle">夜 间 篝 火</h1>
+  <p id="ovEnter">点击任意处进入（开启声音）</p>
+  <p id="ovHint">拖动旋转 · 滚轮缩放 —— 远离篝火，声音按 1/r 衰减</p>
+</div>
+<div id="langSwitch">
+  <button data-lang="zh" class="active">中</button>
+  <button data-lang="en">EN</button>
+  <button data-lang="ja">日</button>
 </div>
 <div id="hud"></div>
 <button id="addLog">🪵 加柴</button>
 <div id="panel">
-  <div id="panelHead"><span>⚙ 参数调节</span><span id="panelArrow">▾</span></div>
+  <div id="panelHead"><span id="panelTitle">⚙ 参数调节</span><span id="panelArrow">▾</span></div>
   <div id="panelBody"></div>
 </div>
 
@@ -135,6 +163,7 @@ const P = {
   sparkRate:   22,     // 火星生成率 (个/秒)
   smokeRate:   9,      // 烟雾生成率 (个/秒)
   wind:        0.22,   // 风速 (m/s)
+  shadowFlick: 0.7,    // 影子闪动:火光投影的快速抖动幅度
   masterVol:   0.9,    // 总音量
   crackleRate: 6,      // 噼啪平均频率 (次/秒)
   rolloff:     1.0,    // 声音距离衰减系数（1 = 物理真实的 1/r）
@@ -488,12 +517,17 @@ scene.add(fireGroup);
 const FIRE_POS = new THREE.Vector3(0, 0.55, 0);   // 火焰声学/光学中心
 
 // 石圈：更大更圆、紧密围合（参考图）
+// 石面用深色烟熏调：近火石块被强光直射，反照率偏浅在 ACES 映射下会过曝成白
 {
-  const rockMat = new THREE.MeshStandardMaterial({ color: 0x736b60, roughness: 0.95 });
-  const rng = mulberry32(21);
+  const rng = mulberry32(21);    // 布局随机流
+  const crng = mulberry32(55);   // 颜色随机流（独立流，保证布局不变）
   const n = 14;
   for (let i = 0; i < n; i++) {
     const a = (i / n) * Math.PI * 2 + (rng() - 0.5) * 0.18;
+    const rockMat = new THREE.MeshStandardMaterial({
+      color: new THREE.Color().setHSL(0.075 + crng() * 0.03, 0.10 + crng() * 0.08, 0.15 + crng() * 0.08),
+      roughness: 0.94 + crng() * 0.06
+    });
     const rock = new THREE.Mesh(new THREE.IcosahedronGeometry(0.19 + rng() * 0.1, 1), rockMat);
     rock.position.set(Math.cos(a) * 0.98, 0.1, Math.sin(a) * 0.98);
     rock.rotation.set(rng() * 3, rng() * 3, rng() * 3);
@@ -573,17 +607,25 @@ emberGlow.position.y = 0.02;
 fireGroup.add(emberGlow);
 
 // 火光：decay = 2 → 光照强度服从平方反比定律（物理正确）
-// 投影光源平滑跟随火焰发光质心：火焰粒子受风力作用，
-// 风越大火越斜、影子摆动越大；无风时质心稳定、影子稳定
-const fireLight = new THREE.PointLight(0xff7a28, 65, 0, 2);
+// 投影光源 = 慢分量 + 快分量：慢分量跟随火焰发光质心（风吹火斜，
+// 影子整体偏摆）；快分量是模拟火舌窜动的随机抖动加快速亮度闪烁，
+// 让石头、木柴的影子在地面上闪动跳跃
+const fireLight = new THREE.PointLight(0xff7a28, 48, 0, 2);
 fireLight.position.copy(FIRE_POS);
 fireLight.castShadow = true;
-fireLight.shadow.mapSize.set(2048, 2048);
+fireLight.shadow.mapSize.set(1024, 1024);   // 较低分辨率让 PCF 影缘更宽更柔
 fireLight.shadow.camera.near = 0.2;
 fireLight.shadow.camera.far = 35;
 fireLight.shadow.bias = -0.005;
 fireLight.shadow.normalBias = 0.04;
 fireGroup.add(fireLight);
+
+// 无影补光：与主光同位置、约 28% 强度、不投影。火焰是"体积光源"，
+// 石块影子本应有宽半影并被环境反弹填充——补光把死黑的放射硬影
+// 提亮成柔和半影，总照度与原先持平（48 × 1.28 ≈ 62）
+const fireFill = new THREE.PointLight(0xff8a38, 13, 0, 2);
+fireFill.position.copy(FIRE_POS);
+fireGroup.add(fireFill);
 
 /* ============================================================
    粒子着色器（火焰 / 火星 / 烟共用，程序化圆形光斑）
@@ -1154,6 +1196,144 @@ function startAudio() {
 }
 
 /* ============================================================
+   多语言（中 / EN / 日）：词典 + 文本节点绑定，切换即时生效
+   ============================================================ */
+const I18N = {
+  zh: {
+    title: '夜间篝火 · Three.js',
+    ovTitle: '夜 间 篝 火',
+    ovEnter: '点击任意处进入（开启声音）',
+    ovHint: '拖动旋转 · 滚轮缩放 —— 远离篝火，声音按 1/r 衰减',
+    addLog: '🪵 加柴',
+    panelTitle: '⚙ 参数调节',
+    gFlame: '火 焰', gSound: '声 音', gEnv: '环 境',
+    fireScale: '火势',
+    buoyancy: '热浮升力 (m/s²)',
+    sparkRate: '火星生成率 (个/s)',
+    smokeRate: '烟雾量 (个/s)',
+    wind: '平均风速 (m/s)',
+    windTip: '瞬时风速按阵风模型围绕均值起伏，火焰与影子随之摆动',
+    shadowFlick: '影子闪动',
+    shadowFlickTip: '火光投影的快速抖动：石头、木柴的影子随火舌窜动而闪烁跳动；0 = 影子稳定',
+    masterVol: '总音量',
+    crackleRate: '噼啪频率 (次/s)',
+    rolloff: '距离衰减系数',
+    rolloffTip: '1 = 物理真实的 1/r 衰减；越大衰减越快',
+    airAbsorb: '空气高频吸收',
+    airAbsorbTip: '距离越远高频损失越多；0 = 关闭',
+    moonInt: '月光强度',
+    fog: '雾浓度',
+    exposure: '曝光',
+    hudFuel: (ft, fx) => ` · 燃料 +${ft}（火力 ×${fx}）`,
+    hud: (d, w, wm, fuel) =>
+      `距火堆 r = ${d} m · 瞬时风速 ${w} m/s（均值 ${wm}）${fuel}\n` +
+      `声音衰减：振幅 ∝ 1/r（声强 ∝ 1/r²）· 高频被空气吸收\n` +
+      `光照衰减：decay = 2（平方反比定律）`
+  },
+  en: {
+    title: 'Night Campfire · Three.js',
+    ovTitle: 'Night Campfire',
+    ovEnter: 'Click anywhere to enter (sound on)',
+    ovHint: 'Drag to orbit · scroll to zoom — sound fades as 1/r from the fire',
+    addLog: '🪵 Add log',
+    panelTitle: '⚙ Parameters',
+    gFlame: 'Flame', gSound: 'Sound', gEnv: 'Environment',
+    fireScale: 'Fire intensity',
+    buoyancy: 'Buoyancy (m/s²)',
+    sparkRate: 'Spark rate (/s)',
+    smokeRate: 'Smoke rate (/s)',
+    wind: 'Mean wind (m/s)',
+    windTip: 'Gusts fluctuate around the mean wind; flames and shadows sway accordingly',
+    shadowFlick: 'Shadow flicker',
+    shadowFlickTip: 'Fast jitter of the firelight — stone and log shadows dance with the flames; 0 = steady shadows',
+    masterVol: 'Master volume',
+    crackleRate: 'Crackle rate (/s)',
+    rolloff: 'Distance rolloff',
+    rolloffTip: '1 = physically correct 1/r falloff; larger = faster falloff',
+    airAbsorb: 'Air HF absorption',
+    airAbsorbTip: 'The farther away, the more highs are lost; 0 = off',
+    moonInt: 'Moonlight',
+    fog: 'Fog density',
+    exposure: 'Exposure',
+    hudFuel: (ft, fx) => ` · fuel +${ft} (fire ×${fx})`,
+    hud: (d, w, wm, fuel) =>
+      `Distance to fire r = ${d} m · wind ${w} m/s (mean ${wm})${fuel}\n` +
+      `Sound falloff: amplitude ∝ 1/r (intensity ∝ 1/r²) · air absorbs highs\n` +
+      `Light falloff: decay = 2 (inverse-square law)`
+  },
+  ja: {
+    title: '夜の焚き火 · Three.js',
+    ovTitle: '夜 の 焚 き 火',
+    ovEnter: '画面をクリックして開始（音が出ます）',
+    ovHint: 'ドラッグで回転 · ホイールでズーム —— 焚き火から離れると音は 1/r で減衰',
+    addLog: '🪵 薪をくべる',
+    panelTitle: '⚙ パラメータ',
+    gFlame: '炎', gSound: '音', gEnv: '環 境',
+    fireScale: '火の勢い',
+    buoyancy: '熱浮力 (m/s²)',
+    sparkRate: '火の粉の発生率 (個/s)',
+    smokeRate: '煙の量 (個/s)',
+    wind: '平均風速 (m/s)',
+    windTip: '瞬間風速は突風モデルで平均のまわりを変動し、炎と影もそれに合わせて揺れます',
+    shadowFlick: '影のちらつき',
+    shadowFlickTip: '火明かりの速い揺らぎ：石や薪の影が炎の動きに合わせてちらちら踊ります。0 = 影は安定',
+    masterVol: '全体音量',
+    crackleRate: 'パチパチ頻度 (回/s)',
+    rolloff: '距離減衰係数',
+    rolloffTip: '1 = 物理的に正しい 1/r 減衰。大きいほど減衰が速い',
+    airAbsorb: '空気の高音吸収',
+    airAbsorbTip: '距離が遠いほど高音が失われます。0 = オフ',
+    moonInt: '月光の強さ',
+    fog: '霧の濃さ',
+    exposure: '露出',
+    hudFuel: (ft, fx) => ` · 燃料 +${ft}（火力 ×${fx}）`,
+    hud: (d, w, wm, fuel) =>
+      `焚き火まで r = ${d} m · 瞬間風速 ${w} m/s（平均 ${wm}）${fuel}\n` +
+      `音の減衰：振幅 ∝ 1/r（音の強さ ∝ 1/r²）· 高音は空気が吸収\n` +
+      `光の減衰：decay = 2（逆二乗の法則）`
+  }
+};
+
+// 初始语言：按浏览器语言偏好自动选择（navigator.languages 从高到低逐项匹配）
+// 顶部按钮可临时切换，但默认始终跟随浏览器设置，不做本地持久化
+function detectLang() {
+  const prefs = (navigator.languages && navigator.languages.length)
+    ? navigator.languages : [navigator.language || ''];
+  for (const p of prefs) {
+    const s = p.toLowerCase();
+    if (s.startsWith('zh')) return 'zh';
+    if (s.startsWith('ja')) return 'ja';
+    if (s.startsWith('en')) return 'en';
+  }
+  return 'en';   // 不在支持列表内时回落英文
+}
+let lang = detectLang();
+// 注意：命名为 tr 而非 t，避免与主循环 step(dt, t) 的时间参数 t 冲突
+function tr(key) { return I18N[lang][key] ?? I18N.zh[key] ?? key; }
+
+// 绑定注册表：切换语言时统一重写 textContent / title
+const boundTexts = [], boundTips = [];
+function bindText(el, key) { boundTexts.push({ el, key }); el.textContent = tr(key); }
+function bindTip(el, key)  { boundTips.push({ el, key });  el.title = tr(key); }
+bindText(document.getElementById('ovTitle'), 'ovTitle');
+bindText(document.getElementById('ovEnter'), 'ovEnter');
+bindText(document.getElementById('ovHint'), 'ovHint');
+bindText(document.getElementById('addLog'), 'addLog');
+bindText(document.getElementById('panelTitle'), 'panelTitle');
+
+const langBtns = [...document.querySelectorAll('#langSwitch button')];
+function applyLang(l) {
+  lang = l;
+  document.documentElement.lang = { zh: 'zh-CN', en: 'en', ja: 'ja' }[l];
+  document.title = tr('title');
+  for (const b of boundTexts) b.el.textContent = tr(b.key);
+  for (const b of boundTips) b.el.title = tr(b.key);
+  for (const btn of langBtns) btn.classList.toggle('active', btn.dataset.lang === l);
+  hudTimer = 1;   // 让 HUD 在下一帧立即用新语言重绘
+}
+for (const btn of langBtns) btn.addEventListener('click', () => applyLang(btn.dataset.lang));
+
+/* ============================================================
    启动遮罩
    ============================================================ */
 const overlay = document.getElementById('overlay');
@@ -1169,6 +1349,8 @@ const clock = new THREE.Clock();
 const hud = document.getElementById('hud');
 let flick = 0.5;
 let lightFlick = 0.5;
+const lightBase = new THREE.Vector3().copy(FIRE_POS);   // 光源慢分量：低通跟随火焰质心
+const lightJit  = new THREE.Vector3();                  // 光源快分量：OU 随机抖动 → 影子闪动
 let windNow = 0.22;   // 瞬时风速（含阵风）
 let hudTimer = 0;
 
@@ -1191,9 +1373,11 @@ function step(dt, t) {
   fireDrive = P.fireScale * (1 + 0.3 * fuel);
   updateAddedLogs(dt);
 
-  // 投影光源只取低通平滑后的闪烁：亮度自然呼吸，影子位置稳定不晃
-  lightFlick += (flick - lightFlick) * Math.min(1, dt * 5);
-  fireLight.intensity = 62 * (0.72 + 0.42 * lightFlick) * fireDrive;
+  // 火光亮度闪烁：响应越快，影子的明暗闪动越明显
+  // （shadowFlick = 0 退回缓慢呼吸；= 1 时贴近 flick 的快速抖动）
+  lightFlick += (flick - lightFlick) * Math.min(1, dt * (4 + 14 * P.shadowFlick));
+  fireLight.intensity = 48 * (0.72 + 0.42 * lightFlick) * fireDrive;
+  fireFill.intensity = fireLight.intensity * 0.28;   // 无影补光同步呼吸，影楔始终被填亮
 
   // 阵风：均值回归随机过程（OU），波动幅度与平均风速成正比。
   // 恒定风只让火焰静态倾斜；阵风才让火焰和影子持续摆动
@@ -1209,11 +1393,26 @@ function step(dt, t) {
   updateSparks(dt, t, flick);
   updateSmoke(dt, t);
 
-  // 影子随风摆动：光源低通跟随火焰质心（限幅防止极端偏移）
+  // 影子运动 = 慢分量 + 快分量
+  // 慢分量：光源低通跟随火焰质心，影子随风整体偏摆（限幅防止极端偏移）
   const kL = Math.min(1, dt * 4);
-  fireLight.position.x += (THREE.MathUtils.clamp(flameCentroid.x, -0.5, 0.5) - fireLight.position.x) * kL;
-  fireLight.position.y += (THREE.MathUtils.clamp(flameCentroid.y, 0.35, 1.0) - fireLight.position.y) * kL;
-  fireLight.position.z += (THREE.MathUtils.clamp(flameCentroid.z, -0.5, 0.5) - fireLight.position.z) * kL;
+  lightBase.x += (THREE.MathUtils.clamp(flameCentroid.x, -0.5, 0.5) - lightBase.x) * kL;
+  lightBase.y += (THREE.MathUtils.clamp(flameCentroid.y, 0.35, 1.0) - lightBase.y) * kL;
+  lightBase.z += (THREE.MathUtils.clamp(flameCentroid.z, -0.5, 0.5) - lightBase.z) * kL;
+  // 快分量：OU 随机抖动模拟火舌窜动，石头的影子随之闪动跳跃。
+  // 竖直抖动改变影子长度、最显眼，幅度给得更大；火越旺（flick 高）闪动越强
+  const sq = Math.sqrt(dt);
+  lightJit.x += -lightJit.x * 9 * dt + (Math.random() - 0.5) * 0.7 * sq;
+  lightJit.y += -lightJit.y * 9 * dt + (Math.random() - 0.5) * 1.0 * sq;
+  lightJit.z += -lightJit.z * 9 * dt + (Math.random() - 0.5) * 0.7 * sq;
+  lightJit.clampScalar(-0.13, 0.13);
+  const jAmp = P.shadowFlick * (0.5 + 0.5 * flick);
+  fireLight.position.set(
+    lightBase.x + lightJit.x * jAmp,
+    Math.max(0.36, lightBase.y + lightJit.y * jAmp),   // 光源不低于石顶，防影子甩到无穷远
+    lightBase.z + lightJit.z * jAmp
+  );
+  fireFill.position.copy(fireLight.position);
 
   if (audio) {
     // 火势与音量联动
@@ -1231,11 +1430,8 @@ function step(dt, t) {
     hudTimer = 0;
     const d = camera.position.distanceTo(FIRE_POS);
     const fuelStr = fuelTarget > 0.05
-      ? ` · 燃料 +${fuelTarget.toFixed(1)}（火力 ×${(1 + 0.3 * fuel).toFixed(2)}）` : '';
-    hud.textContent =
-      `距火堆 r = ${d.toFixed(1)} m · 瞬时风速 ${windNow.toFixed(2)} m/s（均值 ${P.wind.toFixed(2)}）${fuelStr}\n` +
-      `声音衰减：振幅 ∝ 1/r（声强 ∝ 1/r²）· 高频被空气吸收\n` +
-      `光照衰减：decay = 2（平方反比定律）`;
+      ? tr('hudFuel')(fuelTarget.toFixed(1), (1 + 0.3 * fuel).toFixed(2)) : '';
+    hud.textContent = tr('hud')(d.toFixed(1), windNow.toFixed(2), P.wind.toFixed(2), fuelStr);
   }
 
   starMat.uniforms.uTime.value = t;   // 星光闪烁
@@ -1249,49 +1445,47 @@ animate();
    参数滑块面板
    ============================================================ */
 {
-  // [显示名, P 中的键, min, max, step, 自定义应用函数?, 悬停提示?]
+  // [文案键（同 P 中的键，标签随语言切换）, min, max, step, 自定义应用函数?, 是否有悬停提示（键 + 'Tip'）]
   const groups = [
-    ['火 焰', [
-      ['火势', 'fireScale', 0.2, 2, 0.01],
-      ['热浮升力 (m/s²)', 'buoyancy', 0.5, 6, 0.1],
-      ['火星生成率 (个/s)', 'sparkRate', 0, 60, 1],
-      ['烟雾量 (个/s)', 'smokeRate', 0, 20, 0.5],
-      ['平均风速 (m/s)', 'wind', 0, 1.5, 0.01, null,
-        '瞬时风速按阵风模型围绕均值起伏，火焰与影子随之摆动']
+    ['gFlame', [
+      ['fireScale', 0.2, 2, 0.01],
+      ['buoyancy', 0.5, 6, 0.1],
+      ['sparkRate', 0, 60, 1],
+      ['smokeRate', 0, 20, 0.5],
+      ['wind', 0, 1.5, 0.01, null, true],
+      ['shadowFlick', 0, 1, 0.01, null, true]
     ]],
-    ['声 音', [
-      ['总音量', 'masterVol', 0, 1, 0.01,
+    ['gSound', [
+      ['masterVol', 0, 1, 0.01,
         v => { P.masterVol = v; listener.setMasterVolume(v); }],
-      ['噼啪频率 (次/s)', 'crackleRate', 0, 15, 0.5],
-      ['距离衰减系数', 'rolloff', 0, 4, 0.05,
-        v => { P.rolloff = v; fireSound.setRolloffFactor(v); },
-        '1 = 物理真实的 1/r 衰减；越大衰减越快'],
-      ['空气高频吸收', 'airAbsorb', 0, 3, 0.05, null,
-        '距离越远高频损失越多；0 = 关闭']
+      ['crackleRate', 0, 15, 0.5],
+      ['rolloff', 0, 4, 0.05,
+        v => { P.rolloff = v; fireSound.setRolloffFactor(v); }, true],
+      ['airAbsorb', 0, 3, 0.05, null, true]
     ]],
-    ['环 境', [
-      ['月光强度', 'moonInt', 0, 0.6, 0.01,
+    ['gEnv', [
+      ['moonInt', 0, 0.6, 0.01,
         v => { P.moonInt = v; moonLight.intensity = v; }],
-      ['雾浓度', 'fog', 0, 0.04, 0.001,
+      ['fog', 0, 0.04, 0.001,
         v => { P.fog = v; scene.fog.density = v; }],
-      ['曝光', 'exposure', 0.4, 2, 0.01,
+      ['exposure', 0.4, 2, 0.01,
         v => { P.exposure = v; renderer.toneMappingExposure = v; }]
     ]]
   ];
 
   const body = document.getElementById('panelBody');
-  for (const [gname, items] of groups) {
+  for (const [gkey, items] of groups) {
     const h = document.createElement('div');
     h.className = 'pgroup';
-    h.textContent = gname;
+    bindText(h, gkey);
     body.appendChild(h);
-    for (const [label, key, min, max, stp, apply, tip] of items) {
+    for (const [key, min, max, stp, apply, hasTip] of items) {
       const row = document.createElement('label');
       row.className = 'prow';
-      if (tip) row.title = tip;
+      if (hasTip) bindTip(row, key + 'Tip');
       const name = document.createElement('span');
       name.className = 'pname';
-      name.textContent = label;
+      bindText(name, key);
       const val = document.createElement('span');
       val.className = 'pval';
       const input = document.createElement('input');
@@ -1328,8 +1522,11 @@ animate();
   });
 }
 
+// 应用初始语言（标题、html lang、高亮对应按钮；面板标签已在构建时按当前语言写入）
+applyLang(lang);
+
 // 调试钩子：在 rAF 被节流的环境（如隐藏窗口）中手动驱动帧
-window.__campfire = { renderer, scene, camera, step, P };
+window.__campfire = { renderer, scene, camera, step, P, applyLang };
 
 addEventListener('resize', fitViewport);
 </script>
