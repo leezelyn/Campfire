@@ -18,9 +18,11 @@
   }
   #overlay.hidden { opacity: 0; pointer-events: none; }
   /* 启动遮罩期间隐藏操作 UI（参数面板 / HUD / 加柴按钮），进入后随遮罩淡出再淡入 */
-  #hud, #addLog, #panel { transition: opacity .9s ease .35s; }
+  #hud, #addLog, #activityBar, #activityStatus, #panel { transition: opacity .9s ease .35s; }
   #overlay:not(.hidden) ~ #hud,
   #overlay:not(.hidden) ~ #addLog,
+  #overlay:not(.hidden) ~ #activityBar,
+  #overlay:not(.hidden) ~ #activityStatus,
   #overlay:not(.hidden) ~ #panel { opacity: 0; pointer-events: none; transition: none; }
   #overlay h1 { font-size: 42px; font-weight: 300; letter-spacing: .35em; margin: 0 0 18px; text-indent: .35em; }
   #overlay p  { font-size: 15px; color: #b8a98f; margin: 6px 0; letter-spacing: .1em; }
@@ -75,6 +77,37 @@
   #addLog:active { transform: translateX(-50%) scale(.94); }
   #addLog:disabled { opacity: .45; cursor: default; box-shadow: none; }
 
+  #activityBar {
+    position: fixed; left: 50%; bottom: 70px; transform: translateX(-50%);
+    z-index: 6; display: flex; gap: 8px;
+    padding: 7px; border-radius: 14px;
+    background: rgba(8,12,22,.72); border: 1px solid rgba(255,160,70,.16);
+    backdrop-filter: blur(8px);
+  }
+  #activityBar button {
+    min-width: 106px; padding: 9px 12px; border-radius: 9px;
+    background: rgba(30,18,8,.78); color: #e7d5bc;
+    border: 1px solid rgba(255,160,70,.28);
+    font: 13px/1 "Segoe UI", system-ui, sans-serif;
+    cursor: pointer; transition: color .15s, background .15s, box-shadow .15s, opacity .15s;
+  }
+  #activityBar button:hover {
+    color: #ffc890; background: rgba(60,32,12,.9);
+    box-shadow: 0 0 14px rgba(255,140,40,.22);
+  }
+  #activityBar button:disabled { opacity: .55; cursor: default; box-shadow: none; }
+  #activityBar button.active {
+    color: #ffd7a4; border-color: rgba(255,176,82,.68);
+    background: rgba(76,35,10,.92);
+  }
+  #activityStatus {
+    position: fixed; left: 50%; bottom: 126px; transform: translateX(-50%);
+    z-index: 6; min-height: 18px; max-width: 720px;
+    color: #ffd19a; font: 12px/1.4 "Segoe UI", system-ui, sans-serif;
+    text-align: center; text-shadow: 0 1px 4px #000;
+    pointer-events: none; letter-spacing: .04em;
+  }
+
   #langSwitch {
     position: fixed; top: 14px; left: 16px; z-index: 11;   /* 高于启动遮罩，进入前也能切换语言 */
     display: flex; gap: 6px;
@@ -117,6 +150,13 @@
 </div>
 <div id="hud"></div>
 <button id="addLog">🪵 加柴</button>
+<div id="activityStatus" aria-live="polite"></div>
+<div id="activityBar">
+  <button id="roastBtn">🍡 烤棉花糖</button>
+  <button id="kettleBtn">🫖 煮水</button>
+  <button id="torchBtn">🔥 点燃火把</button>
+  <button id="pineconeBtn">🌰 投掷松果</button>
+</div>
 <div id="panel">
   <div id="panelHead"><span id="panelTitle">⚙ 参数调节</span><span id="panelArrow">▾</span></div>
   <div id="panelBody"></div>
@@ -170,7 +210,10 @@ const P = {
   airAbsorb:   1.0,    // 空气高频吸收强度
   moonInt:     0.12,   // 月光强度（月牙较弱）
   fog:         0.012,  // 雾浓度
-  exposure:    1.1     // 画面曝光
+  exposure:    1.1,    // 画面曝光
+  rain:        0.0,    // 细雨强度 0..1（雨中火更弱、更多水汽与嘶声、雾更浓）
+  cloud:       0.25,   // 云量 0..1：云层厚度与遮月程度
+  moonPhase:   138     // 月相角度（度）：0≈满月，90≈上弦，138 标准蛾眉月，180≈新月
 };
 
 /* ============================================================
@@ -279,7 +322,8 @@ function radialTexture(size, stops) {
 
 // 月亮（参考图：默认视角左上方，带月晕和云）+ 微弱月光
 const moonDir = new THREE.Vector3(-0.86, 0.22, -0.46).normalize();
-let moonLight;
+let moonLight, moonMat, moonHalo, moonSide, moonTLit;   // 由天气系统在 step 里驱动月相/遮月
+const clouds = [];                                       // 漂移云层（含基准位与速度）
 {
   const moonPos = moonDir.clone().multiplyScalar(330);
   const side = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), moonDir).normalize();
@@ -336,7 +380,8 @@ let moonLight;
     new THREE.ShaderMaterial({
       uniforms: {
         uMap: { value: moonTex },
-        uSunDir: { value: sunDirW }
+        uSunDir: { value: sunDirW },
+        uDim: { value: 1 }                       // 云层遮月时整体压暗
       },
       vertexShader: /* glsl */`
         varying vec3 vNormal;
@@ -351,10 +396,11 @@ let moonLight;
         varying vec2 vUv;
         uniform sampler2D uMap;
         uniform vec3 uSunDir;
+        uniform float uDim;
         void main() {
           float d = clamp(dot(normalize(vNormal), uSunDir), 0.0, 1.0);
           float l = 0.06 + 2.1 * d;                // 0.06 ≈ 地照："新月抱旧月"的暗面微光
-          vec3 col = texture2D(uMap, vUv).rgb * l;
+          vec3 col = texture2D(uMap, vUv).rgb * l * uDim;
           gl_FragColor = vec4(col, 1.0);
           #include <tonemapping_fragment>
           #include <colorspace_fragment>
@@ -364,6 +410,7 @@ let moonLight;
   moon.position.copy(moonPos);
   moon.rotation.y = 1.6;
   scene.add(moon);
+  moonMat = moon.material; moonSide = side.clone(); moonTLit = tLit.clone();
 
   // 月晕
   const halo = new THREE.Sprite(new THREE.SpriteMaterial({
@@ -375,6 +422,7 @@ let moonLight;
   halo.position.copy(moonPos);
   halo.scale.setScalar(78);
   scene.add(halo);
+  moonHalo = halo;
 
   // 月旁的云（柔和椭圆叠加的画布贴图）
   const cloudTex = (() => {
@@ -394,16 +442,19 @@ let moonLight;
     return t;
   })();
   const rng = mulberry32(63);
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 7; i++) {
+    const baseOp = 0.35 + rng() * 0.3;
     const cl = new THREE.Sprite(new THREE.SpriteMaterial({
       map: cloudTex, color: 0x8ea3c8, transparent: true,
-      opacity: 0.35 + rng() * 0.3, depthWrite: false, fog: false
+      opacity: baseOp, depthWrite: false, fog: false
     }));
-    cl.position.copy(moonPos)
-      .addScaledVector(side, (rng() - 0.45) * 170)
-      .add(new THREE.Vector3(0, (rng() - 0.55) * 55, 0));
+    const sideOff = (rng() - 0.5) * 360;                       // 沿天空横向铺开（含画面外，供漂移轮回）
+    const base = moonPos.clone().add(new THREE.Vector3(0, (rng() - 0.55) * 60, 0));
+    cl.position.copy(base).addScaledVector(side, sideOff);
     cl.scale.set(120 + rng() * 90, 34 + rng() * 22, 1);
     scene.add(cl);
+    // 缓慢横向漂移：风越大云走得越快；off 在 ±240 间轮回
+    clouds.push({ sprite: cl, base, off: sideOff, baseOp, speed: 2 + rng() * 5 });
   }
 
   moonLight = new THREE.DirectionalLight(0x91a8d0, 0.12);   // 月牙的环境月光更弱
@@ -411,6 +462,14 @@ let moonLight;
   scene.add(moonLight);
 
   scene.add(new THREE.HemisphereLight(0x202c44, 0x0a0c08, 0.22));
+}
+
+// 设置月相：由相位角重算太阳方向 S = (月→地)·(-cosα) + 切向·sinα
+function setMoonPhase(deg) {
+  if (!moonMat) return;
+  const ph = THREE.MathUtils.degToRad(deg);
+  moonMat.uniforms.uSunDir.value.copy(moonDir).multiplyScalar(-Math.cos(ph))
+    .addScaledVector(moonTLit, Math.sin(ph)).normalize();
 }
 
 // 远山剪影
@@ -464,7 +523,8 @@ let moonLight;
   scene.add(lakeGroup);
 }
 
-// 松树
+// 松树（收集引用，随风摇动 → 树影摆动）
+const trees = [];
 function makeTree(x, z, s) {
   const tree = new THREE.Group();
   const trunk = new THREE.Mesh(
@@ -485,6 +545,7 @@ function makeTree(x, z, s) {
   tree.position.set(x, 0, z);
   tree.rotation.y = Math.random() * Math.PI * 2;
   scene.add(tree);
+  trees.push({ g: tree, ph: Math.random() * 6.28, sp: 0.5 + Math.random() * 0.5, amp: 0.012 + Math.random() * 0.022 });
 }
 {
   const rng = mulberry32(7);
@@ -497,6 +558,111 @@ function makeTree(x, z, s) {
     if (Math.abs(d) < 0.6) a = LAKE_AZ + Math.sign(d || 1) * (0.6 + rng() * 0.25);
     makeTree(Math.cos(a) * r, Math.sin(a) * r, 0.8 + rng() * 1.4);
   }
+}
+
+/* ============================================================
+   营地道具：帐篷、折叠椅、背包、灯具、炊具——围火布置，
+   均投射阴影、被火光与提灯暖光照亮（避开朝湖/月的视野走廊）
+   ============================================================ */
+let lanternGlowMat = null;
+const campLight = new THREE.PointLight(0xffb259, 0, 7, 2);   // 提灯暖光（不投影，点缀补光）
+scene.add(campLight);
+
+function placeProp(group, az, r, faceIn = true) {
+  group.position.set(Math.cos(az) * r, 0, Math.sin(az) * r);
+  if (faceIn) group.rotation.y = Math.atan2(-Math.cos(az), -Math.sin(az));   // 正面（+Z）朝火堆
+  group.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  scene.add(group);
+}
+
+// 帐篷：三角棱柱（脊形帐），+Z 端开一道暗门朝火
+function makeTent() {
+  const g = new THREE.Group();
+  const W = 1.5, H = 1.05, D = 1.9;
+  const tri = new THREE.Shape();
+  tri.moveTo(-W / 2, 0); tri.lineTo(W / 2, 0); tri.lineTo(0, H); tri.closePath();
+  const geo = new THREE.ExtrudeGeometry(tri, { depth: D, bevelEnabled: false });
+  geo.translate(0, 0, -D / 2);
+  const fab = new THREE.MeshStandardMaterial({ color: 0x2f5d4a, roughness: 0.92, side: THREE.DoubleSide });
+  g.add(new THREE.Mesh(geo, fab));
+  const door = new THREE.Mesh(new THREE.PlaneGeometry(W * 0.34, H * 0.66),
+    new THREE.MeshStandardMaterial({ color: 0x0a0f0c, roughness: 1 }));
+  door.position.set(0, H * 0.32, D / 2 + 0.004);
+  g.add(door);
+  return g;
+}
+
+// 折叠椅：座面 + 斜靠背 + 四条角腿（腿长=座高，顶端贴座底、底端落地，轻微外八不交叉）
+function makeChair() {
+  const g = new THREE.Group();
+  const frame = new THREE.MeshStandardMaterial({ color: 0x20242a, roughness: 0.6, metalness: 0.3 });
+  const fab = new THREE.MeshStandardMaterial({ color: 0x7a2d2d, roughness: 0.9 });
+  const seatY = 0.3, w = 0.42, d = 0.42;
+  const seat = new THREE.Mesh(new THREE.BoxGeometry(w, 0.05, d), fab);
+  seat.position.y = seatY; g.add(seat);
+  const back = new THREE.Mesh(new THREE.BoxGeometry(w, 0.34, 0.04), fab);
+  back.position.set(0, seatY + 0.19, -d / 2 + 0.03); back.rotation.x = -0.12; g.add(back);
+  const legGeo = new THREE.CylinderGeometry(0.018, 0.014, seatY, 8);   // 腿长 = 座高
+  const inset = 0.055, splay = 0.05;
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    const leg = new THREE.Mesh(legGeo, frame);
+    leg.position.set(sx * (w / 2 - inset), seatY / 2, sz * (d / 2 - inset));   // 中心居中 → 顶=座底、底=地面
+    leg.rotation.z = -sx * splay; leg.rotation.x = sz * splay;                 // 四角各自轻微外八
+    g.add(leg);
+  }
+  return g;
+}
+
+// 背包：圆鼓的软袋（胶囊体）+ 扁圆顶盖 + 前袋 + 弯肩带 + 提环（不再方正）
+function makeBackpack() {
+  const g = new THREE.Group();
+  const m = new THREE.MeshStandardMaterial({ color: 0x3a4b2c, roughness: 0.95 });
+  const m2 = new THREE.MeshStandardMaterial({ color: 0x2a3720, roughness: 0.95 });
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.16, 0.2, 6, 16), m);
+  body.scale.set(1.05, 1, 0.72); body.position.y = 0.27; g.add(body);            // 鼓胀软袋
+  const lid = new THREE.Mesh(new THREE.SphereGeometry(0.16, 16, 12), m);
+  lid.scale.set(1.06, 0.52, 0.75); lid.position.y = 0.46; g.add(lid);            // 扁圆顶盖
+  const pocket = new THREE.Mesh(new THREE.CapsuleGeometry(0.11, 0.08, 5, 14), m2);
+  pocket.scale.set(1, 1, 0.5); pocket.position.set(0, 0.2, 0.14); g.add(pocket); // 前袋（贴前面）
+  for (const sx of [-0.08, 0.08]) {
+    const strap = new THREE.Mesh(new THREE.CapsuleGeometry(0.022, 0.3, 4, 8), m2);
+    strap.position.set(sx, 0.3, -0.15); strap.rotation.x = 0.16; g.add(strap);   // 弯肩带（背面）
+  }
+  const loop = new THREE.Mesh(new THREE.TorusGeometry(0.04, 0.012, 6, 12), m2);
+  loop.position.set(0, 0.54, -0.02); loop.rotation.x = Math.PI / 2; g.add(loop); // 顶部提环
+  return g;
+}
+
+// 提灯：立杆 + 挑臂 + 灯体 + 发光灯芯（携带一盏暖色点光）
+function makeLantern() {
+  const g = new THREE.Group();
+  const metal = new THREE.MeshStandardMaterial({ color: 0x2a2a2e, roughness: 0.5, metalness: 0.6 });
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.02, 0.72, 6), metal);
+  post.position.y = 0.36; g.add(post);
+  const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.2, 6), metal);
+  arm.position.set(0.09, 0.7, 0); arm.rotation.z = Math.PI / 2; g.add(arm);
+  const cap = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.06, 8), metal);
+  cap.position.set(0.18, 0.66, 0); g.add(cap);
+  const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.062, 0.05, 8), metal);
+  cup.position.set(0.18, 0.5, 0); g.add(cup);
+  const glowMat = new THREE.MeshStandardMaterial({
+    color: 0xffd9a0, emissive: 0xffb259, emissiveIntensity: 2.4, roughness: 0.4
+  });
+  const globe = new THREE.Mesh(new THREE.SphereGeometry(0.052, 12, 10), glowMat);
+  globe.position.set(0.18, 0.58, 0); g.add(globe);
+  lanternGlowMat = glowMat;
+  return { group: g, globe };
+}
+
+{
+  placeProp(makeTent(), 2.30, 3.1, true);          // 帐篷：左后方
+  placeProp(makeChair(), 0.15, 1.95, true);        // 折叠椅：右侧，面向火
+  placeProp(makeBackpack(), 0.62, 2.15, true);     // 背包：椅旁
+  const lant = makeLantern();
+  placeProp(lant.group, 1.25, 2.5, true);          // 提灯：左侧前景
+  lant.globe.getWorldPosition(campLight.position); // 点光对齐灯芯世界坐标
+  campLight.intensity = 4.5;
+  // 炊具由并行实现的「煮水」水壶三脚架（kettleRig）承担，此处不再重复造一套
 }
 
 // 简单可复现的随机数（树木布局固定）
@@ -539,9 +705,12 @@ const FIRE_POS = new THREE.Vector3(0, 0.55, 0);   // 火焰声学/光学中心
 }
 
 // 木柴：放射状围成圆锥（俯视呈辐条状、正视呈帐篷状），内端炭化发光
+// 随燃烧推进：树皮渐黑（BARK_FRESH→BARK_CHAR）、teepee 内端下沉坍塌
 let charMat, barkMat;
+const BARK_FRESH = new THREE.Color(0x33200f), BARK_CHAR = new THREE.Color(0x0c0805);
+const teepeeLogs = [];
 {
-  barkMat = new THREE.MeshStandardMaterial({ color: 0x33200f, roughness: 0.95 });
+  barkMat = new THREE.MeshStandardMaterial({ color: BARK_FRESH.clone(), roughness: 0.95 });
   charMat = new THREE.MeshStandardMaterial({
     color: 0x140a05, emissive: 0xff4a10, emissiveIntensity: 1.4, roughness: 1
   });
@@ -558,7 +727,8 @@ let charMat, barkMat;
     const radius = 0.062 + rng() * 0.022;
     const log = new THREE.Group();
     log.position.copy(outer);
-    log.quaternion.setFromUnitVectors(up, dir.normalize());
+    const ndir = dir.clone().normalize();
+    log.quaternion.setFromUnitVectors(up, ndir);
     const bark = new THREE.Mesh(new THREE.CylinderGeometry(radius * 0.8, radius, len, 8), barkMat);
     bark.position.y = len / 2;
     bark.castShadow = true;
@@ -568,6 +738,10 @@ let charMat, barkMat;
     char.position.y = len * 0.78;
     log.add(char);
     fireGroup.add(log);
+    // 坍塌目标姿态：内端下沉、整体趋于平铺
+    const flatDir = new THREE.Vector3(ndir.x, ndir.y * 0.18, ndir.z).normalize();
+    const flatQuat = new THREE.Quaternion().setFromUnitVectors(up, flatDir);
+    teepeeLogs.push({ group: log, baseQuat: log.quaternion.clone(), flatQuat, baseY: outer.y });
   }
 }
 
@@ -682,7 +856,7 @@ function makeParticleSystem(count, softness, blending) {
 function updateScales() {
   // 把粒子的"世界尺寸"换算到屏幕像素：size * (h / 2tan(fov/2)) / z
   const s = renderer.domElement.height / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
-  for (const ps of [flameSys, sparkSys, smokeSys]) ps.mat.uniforms.uScale.value = s;
+  for (const ps of [flameSys, sparkSys, smokeSys, rainSys, fireflySys]) ps.mat.uniforms.uScale.value = s;
 }
 
 /* ============================================================
@@ -777,7 +951,8 @@ function updateFlames(dt, t, flick) {
     const turb = 1.5 * L.turbK;                                 // 外焰湍流强、内焰平稳
     p.vx += Math.sin(t * 3.1 + p.seed * 1.7 + p.y * 2.2) * turb * dt;
     p.vz += Math.cos(t * 2.6 + p.seed * 2.3 + p.y * 2.2) * turb * dt;
-    p.vx += windNow * 1.4 * L.windK * dt;                       // 外层焰膜受风更明显
+    p.vx += windVX * 1.4 * L.windK * dt;                        // 受风（矢量：含风向）
+    p.vz += windVZ * 1.4 * L.windK * dt;
     p.vx += -p.x * L.converge * dt;                             // 内焰强收束成窄核心柱
     p.vz += -p.z * L.converge * dt;
     p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
@@ -786,7 +961,7 @@ function updateFlames(dt, t, flick) {
     flameColor(f, FLAME_RAMPS[p.layer], _c);
     flameSys.col[i*3] = _c[0]; flameSys.col[i*3+1] = _c[1]; flameSys.col[i*3+2] = _c[2];
     flameSys.sz[i] = (L.size * (1 - 0.72 * f) + 0.05) * (0.85 + 0.3 * flick) * (0.55 + 0.45 * fireDrive);
-    flameSys.al[i] = Math.pow(Math.sin(Math.PI * Math.min(1, f * 1.15)), 0.7) * 0.85 * L.alphaK;
+    flameSys.al[i] = Math.pow(Math.sin(Math.PI * Math.min(1, f * 1.15)), 0.7) * 0.85 * L.alphaK * (0.28 + 0.72 * fireHealth);   // 火势弱时焰体淡去，只剩余烬
     // 内焰最亮，对发光质心的贡献最大
     const wgt = flameSys.al[i] * (1.2 - f) * (p.layer === 0 ? 1.5 : p.layer === 1 ? 0.7 : 0.15);
     fcx += p.x * wgt; fcy += p.y * wgt; fcz += p.z * wgt; fw += wgt;
@@ -858,7 +1033,8 @@ function updateSparks(dt, t, flick) {
     p.vx *= k; p.vy *= k; p.vz *= k;
     p.vx += Math.sin(t * 5 + p.seed) * 0.6 * dt;       // 气流扰动
     p.vz += Math.cos(t * 4 + p.seed) * 0.6 * dt;
-    p.vx += windNow * 0.9 * dt;                        // 阵风吹偏火星
+    p.vx += windVX * 0.9 * dt;                         // 阵风吹偏火星（矢量）
+    p.vz += windVZ * 0.9 * dt;
     p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
 
     sparkSys.pos[i*3] = p.x; sparkSys.pos[i*3+1] = p.y; sparkSys.pos[i*3+2] = p.z;
@@ -897,9 +1073,9 @@ function spawnSmoke(p) {
 }
 
 function updateSmoke(dt, t) {
-  WIND.set(windNow, 0, windNow * 0.36);
-  // 刚投入未引燃的湿柴大量冒烟（fuelTarget 与 fuel 的差代表闷烧中的新柴）
-  smokeAcc += dt * P.smokeRate * (1 + 0.35 * fuel + 1.3 * Math.max(0, fuelTarget - fuel));
+  WIND.set(windVX, 0, windVZ);                      // 烟随风向矢量漂移
+  // 刚投入未引燃的湿柴大量冒烟 + 雨打火堆腾起的水汽（rainNow）
+  smokeAcc += dt * P.smokeRate * (1 + 0.35 * fuel + 1.3 * Math.max(0, fuelTarget - fuel) + 2.0 * rainNow);
   while (smokeAcc >= 1) {
     smokeAcc -= 1;
     const p = smokes.find(s => !s.alive);
@@ -931,6 +1107,128 @@ function updateSmoke(dt, t) {
   smokeSys.g.attributes.aAlpha.needsUpdate = true;
 }
 
+/* ============================================================
+   细雨 —— 受风斜落的雨丝，强度 P.rain；雨中火更弱、更多水汽、雾更浓
+   ============================================================ */
+const RAIN_N = 360;
+const rainSys = makeParticleSystem(RAIN_N, '0.30', THREE.AdditiveBlending);
+const rainP = [];
+for (let i = 0; i < RAIN_N; i++) rainP.push({ x: 0, y: -1, z: 0, vy: 0, init: false });
+function spawnRain(p) {
+  p.x = (Math.random() * 2 - 1) * 16;      // 火堆周围 ±16m 的雨幕
+  p.y = 6 + Math.random() * 8;
+  p.z = (Math.random() * 2 - 1) * 16;
+  p.vy = -(6.5 + Math.random() * 5);       // 下落速度
+  p.init = true;
+}
+let rainHidden = false;
+function updateRain(dt) {
+  if (rainNow < 0.01) {                     // 无雨：清零一次后跳过，省开销
+    if (!rainHidden) { for (let i = 0; i < RAIN_N; i++) rainSys.al[i] = 0; rainSys.g.attributes.aAlpha.needsUpdate = true; rainHidden = true; }
+    return;
+  }
+  rainHidden = false;
+  const active = Math.floor(RAIN_N * rainNow);
+  for (let i = 0; i < RAIN_N; i++) {
+    if (i >= active) { rainSys.al[i] = 0; continue; }
+    const p = rainP[i];
+    if (!p.init) spawnRain(p);
+    p.y += p.vy * dt;
+    p.x += windVX * 1.6 * dt;               // 雨被风吹斜
+    p.z += windVZ * 1.6 * dt;
+    if (p.y < 0.03) spawnRain(p);           // 落地回收
+    rainSys.pos[i*3] = p.x; rainSys.pos[i*3+1] = p.y; rainSys.pos[i*3+2] = p.z;
+    rainSys.col[i*3] = 0.52; rainSys.col[i*3+1] = 0.60; rainSys.col[i*3+2] = 0.78;
+    rainSys.sz[i] = 0.07;
+    rainSys.al[i] = 0.42 * rainNow;
+  }
+  rainSys.g.attributes.position.needsUpdate = true;
+  rainSys.g.attributes.aColor.needsUpdate = true;
+  rainSys.g.attributes.aSize.needsUpdate = true;
+  rainSys.g.attributes.aAlpha.needsUpdate = true;
+}
+
+/* ============================================================
+   环境生物：萤火虫、飞蛾、树影摇动（远处动物叫声在 startAudio 内）
+   ============================================================ */
+// 萤火虫：中景缓慢蜿蜒漂浮的黄绿冷光，各自独立明灭（远离火光处更显）
+const FIREFLY_N = 42;
+const fireflySys = makeParticleSystem(FIREFLY_N, '0.25', THREE.AdditiveBlending);
+const fireflies = [];
+{
+  const rng = mulberry32(91);
+  for (let i = 0; i < FIREFLY_N; i++) {
+    const a = rng() * Math.PI * 2, r = 3.5 + rng() * 8;
+    fireflies.push({
+      x: Math.cos(a) * r, y: 0.3 + rng() * 1.6, z: Math.sin(a) * r,
+      phase: rng() * 6.28, blink: 0.4 + rng() * 1.0, sp: 0.12 + rng() * 0.2,
+      seed: rng() * 100, drift: rng() * 6.28
+    });
+    fireflySys.col[i*3] = 0.7; fireflySys.col[i*3+1] = 1.0; fireflySys.col[i*3+2] = 0.32;   // 黄绿（恒定）
+  }
+  fireflySys.g.attributes.aColor.needsUpdate = true;
+}
+function updateFireflies(dt, t) {
+  for (let i = 0; i < FIREFLY_N; i++) {
+    const p = fireflies[i];
+    p.x += Math.sin(t * 0.4 + p.seed) * p.sp * dt + windVX * 0.12 * dt;       // 蜿蜒漂移 + 随风
+    p.z += Math.cos(t * 0.33 + p.seed * 1.3) * p.sp * dt + windVZ * 0.12 * dt;
+    p.y += Math.sin(t * 0.6 + p.drift) * 0.12 * dt;
+    p.y = Math.max(0.25, Math.min(2.2, p.y));
+    let glow = Math.max(0, Math.sin(t * p.blink + p.phase));                  // 明灭脉冲
+    glow = glow * glow * glow;                                               // 亮起锐、熄灭缓
+    const vis = Math.min(1, Math.max(0, (Math.hypot(p.x, p.z) - 1.6) / 3));  // 近火被压过
+    fireflySys.pos[i*3] = p.x; fireflySys.pos[i*3+1] = p.y; fireflySys.pos[i*3+2] = p.z;
+    fireflySys.sz[i] = 0.05 + 0.035 * glow;
+    fireflySys.al[i] = glow * 0.9 * vis * (1 - 0.6 * rainNow);                // 雨天萤火稀疏
+  }
+  fireflySys.g.attributes.position.needsUpdate = true;
+  fireflySys.g.attributes.aSize.needsUpdate = true;
+  fireflySys.g.attributes.aAlpha.needsUpdate = true;
+}
+
+// 飞蛾：被提灯/火光吸引，不匀速盘旋扑飞的淡色身影
+const moths = [];
+{
+  const mothTex = radialTexture(32, [
+    [0, 'rgba(222,212,182,0.95)'], [0.5, 'rgba(168,158,128,0.4)'], [1, 'rgba(150,140,110,0)']
+  ]);
+  const fireTarget = new THREE.Vector3(0, 1.0, 0);
+  for (let i = 0; i < 5; i++) {
+    const spr = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: mothTex, transparent: true, depthWrite: false, opacity: 0, fog: true
+    }));
+    spr.scale.set(0.09, 0.06, 1);
+    scene.add(spr);
+    moths.push({
+      spr, target: i < 3 ? campLight.position : fireTarget,    // 3 只绕提灯、2 只绕火
+      ang: Math.random() * 6.28, rad: 0.22 + Math.random() * 0.4,
+      ph: Math.random() * 6.28, yph: Math.random() * 6.28, seed: Math.random() * 100
+    });
+  }
+}
+function updateMoths(dt, t) {
+  for (const m of moths) {
+    m.ang += (0.8 + 0.6 * Math.sin(t * 1.3 + m.seed)) * dt;                  // 不匀速盘旋
+    const r = m.rad * (1 + 0.3 * Math.sin(t * 2.1 + m.ph));
+    m.spr.position.set(
+      m.target.x + Math.cos(m.ang) * r + Math.sin(t * 5 + m.seed) * 0.04,
+      m.target.y + 0.12 * Math.sin(t * 3.3 + m.yph) + 0.05 * Math.sin(t * 7 + m.seed),
+      m.target.z + Math.sin(m.ang) * r + Math.cos(t * 4.6 + m.seed) * 0.04
+    );
+    m.spr.material.opacity = 0.5 + 0.4 * Math.sin(t * 9 + m.seed);           // 翅扑明灭
+  }
+}
+
+// 树影摇动：松树随瞬时风速轻摆，silhouette 与投影一起晃动
+function updateTreeSway(dt, t) {
+  for (const tr of trees) {
+    const sway = tr.amp * (0.4 + 2.6 * windNow);
+    tr.g.rotation.x = Math.sin(t * tr.sp + tr.ph) * sway;
+    tr.g.rotation.z = Math.cos(t * tr.sp * 0.8 + tr.ph) * sway * 0.7;
+  }
+}
+
 updateScales();
 
 /* ============================================================
@@ -939,9 +1237,11 @@ updateScales();
    ============================================================ */
 const addedLogs = [];
 const burstQueue = [];
-let fuel = 0;            // 已引燃的燃料（驱动火势）
-let fuelTarget = 0;      // 投入的燃料总量（含闷烧中的新柴）
+let fuel = 3;            // 已引燃的燃料（驱动火势）——初始柴堆，会随燃烧消耗
+let fuelTarget = 3;      // 现存木柴总量（含闷烧中的新柴）
 let fireDrive = 1;       // P.fireScale × 燃料加成，每帧更新
+let fireHealth = 1;      // 0（余烬）→ 1（旺火）：由现存燃料决定，需持续添柴维持
+let collapseAmt = 0;     // 柴堆坍塌/炭化进度（平滑跟随燃尽程度，驱动树皮变黑与下沉）
 let crackleBoostUntil = 0;
 
 function tossLog() {
@@ -952,6 +1252,7 @@ function tossLog() {
       const old = addedLogs.splice(idx, 1)[0];
       scene.remove(old.mesh);
       old.mesh.geometry.dispose();
+      old.mesh.material.dispose();
     }
   }
   // 从镜头一侧抛入，抛物线命中火心附近
@@ -964,7 +1265,7 @@ function tossLog() {
   const T = 0.6 + Math.random() * 0.15;     // 飞行时间，反解初速度
   const mesh = new THREE.Mesh(
     new THREE.CylinderGeometry(0.05, 0.062, 0.68 + Math.random() * 0.16, 8),
-    barkMat
+    new THREE.MeshStandardMaterial({ color: 0x3a2512, roughness: 0.9 })   // 新柴：独立新鲜木色，不随炭化变黑
   );
   mesh.castShadow = true;
   mesh.position.set(sx, sy, sz);
@@ -997,7 +1298,8 @@ function landLog(l) {
     new THREE.Vector3(0, 1, 0),
     new THREE.Vector3(Math.cos(yaw), (Math.random() - 0.5) * 0.5, Math.sin(yaw)).normalize()
   );
-  fuelTarget = Math.min(4, fuelTarget + 1);
+  fuelTarget = Math.min(6, fuelTarget + 1.4);          // 新柴补充燃料（上限提高）
+  fuel = Math.min(fuelTarget, fuel + 0.6);             // 即时小幅引燃 → 添柴瞬间火势一窜
   // 落点特效：火星迸溅 + 烟尘
   burstQueue.push({ x: l.mesh.position.x, y: l.restY + 0.1, z: l.mesh.position.z, n: 24 });
   for (let k = 0; k < 6; k++) {
@@ -1014,6 +1316,563 @@ function landLog(l) {
     crackleBoostUntil = audio.ctx.currentTime + 2.5;         // 爆裂声高发期
   }
 }
+
+/* ============================================================
+   营火互动：烤棉花糖 / 煮水 / 点燃火把 / 投掷松果
+   动作共享火势与天气状态，模型均使用简单几何体，避免额外资源请求
+   ============================================================ */
+const activityStatus = document.getElementById('activityStatus');
+const actionButtons = {
+  roast: document.getElementById('roastBtn'),
+  kettle: document.getElementById('kettleBtn'),
+  torch: document.getElementById('torchBtn'),
+  pinecone: document.getElementById('pineconeBtn')
+};
+const UP_AXIS = new THREE.Vector3(0, 1, 0);
+let activityMessageKey = '';
+let activityMessageUntil = 0;
+let activityUiTimer = 0;
+
+function showActivityMessage(key, seconds = 2.8) {
+  activityMessageKey = key;
+  activityMessageUntil = performance.now() + seconds * 1000;
+}
+
+function cameraSidePosition(radius, height) {
+  const p = camera.position.clone().sub(FIRE_POS);
+  p.y = 0;
+  if (p.lengthSq() < 0.001) p.set(0, 0, 1);
+  return p.normalize().multiplyScalar(radius).setY(height);
+}
+
+function aimRod(group, rod, tip, from, to) {
+  const dir = to.clone().sub(from);
+  const len = Math.max(0.001, dir.length());
+  group.position.copy(from);
+  group.quaternion.setFromUnitVectors(UP_AXIS, dir.multiplyScalar(1 / len));
+  rod.position.y = len * 0.5;
+  rod.scale.y = len;
+  tip.position.y = len;
+}
+
+function makeBeamBetween(a, b, radius, material, segments = 8) {
+  const dir = b.clone().sub(a);
+  const mesh = new THREE.Mesh(
+    new THREE.CylinderGeometry(radius, radius, dir.length(), segments),
+    material
+  );
+  mesh.position.copy(a).add(b).multiplyScalar(0.5);
+  mesh.quaternion.setFromUnitVectors(UP_AXIS, dir.normalize());
+  mesh.castShadow = true;
+  return mesh;
+}
+
+function disposeObject3D(root) {
+  root.traverse(o => {
+    if (o.geometry) o.geometry.dispose();
+    if (o.material) {
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      for (const m of mats) m.dispose();
+    }
+  });
+  root.removeFromParent();
+}
+
+// 1) 棉花糖：竹签伸向火堆，颜色随受热逐渐焦黄
+const skewer = new THREE.Group();
+const skewerStick = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.014, 0.018, 1, 7),
+  new THREE.MeshStandardMaterial({ color: 0x9b7042, roughness: 0.85 })
+);
+const marshmallowMat = new THREE.MeshStandardMaterial({
+  color: 0xfff2d8, roughness: 0.88, emissive: 0x3a1203, emissiveIntensity: 0
+});
+const marshmallow = new THREE.Group();
+const marshmallowBody = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.118, 0.118, 0.18, 18),
+  marshmallowMat
+);
+const marshmallowTop = new THREE.Mesh(new THREE.SphereGeometry(0.118, 18, 10), marshmallowMat);
+const marshmallowBottom = marshmallowTop.clone();
+marshmallowTop.scale.y = 0.42;
+marshmallowBottom.scale.y = 0.42;
+marshmallowTop.position.y = 0.09;
+marshmallowBottom.position.y = -0.09;
+marshmallow.add(marshmallowBody, marshmallowTop, marshmallowBottom);
+marshmallow.traverse(o => { if (o.isMesh) o.castShadow = true; });
+skewer.add(skewerStick, marshmallow);
+skewer.visible = false;
+scene.add(skewer);
+
+const marshmallowAction = {
+  state: 'idle', time: 0, progress: 0,
+  startHand: new THREE.Vector3(), roastHand: new THREE.Vector3(),
+  startTip: new THREE.Vector3(), roastTip: new THREE.Vector3()
+};
+
+function startRoasting() {
+  if (marshmallowAction.state !== 'idle') return;
+  marshmallowAction.state = 'approach';
+  marshmallowAction.time = 0;
+  marshmallowAction.progress = 0;
+  const view = camera.position.clone().sub(FIRE_POS).setY(0).normalize();
+  const side = new THREE.Vector3(-view.z, 0, view.x);
+  marshmallowAction.startHand.copy(view).multiplyScalar(2.65).addScaledVector(side, 1.0).setY(1.35);
+  marshmallowAction.roastHand.copy(view).multiplyScalar(1.65).addScaledVector(side, 0.82).setY(1.0);
+  marshmallowAction.startTip.copy(view).multiplyScalar(1.0).addScaledVector(side, 0.58).setY(0.96);
+  marshmallowAction.roastTip.copy(side).multiplyScalar(0.28).addScaledVector(view, 0.08).setY(0.78);
+  marshmallowMat.color.set(0xfff2d8);
+  marshmallowMat.emissiveIntensity = 0;
+  skewer.visible = true;
+}
+
+function updateMarshmallow(dt, t) {
+  const a = marshmallowAction;
+  if (a.state === 'idle') return;
+  a.time += dt;
+  const hand = new THREE.Vector3();
+  const tip = new THREE.Vector3();
+  if (a.state === 'approach') {
+    const k = THREE.MathUtils.smoothstep(Math.min(1, a.time / 0.8), 0, 1);
+    hand.lerpVectors(a.startHand, a.roastHand, k);
+    tip.lerpVectors(a.startTip, a.roastTip, k);
+    if (k >= 1) { a.state = 'roast'; a.time = 0; }
+  } else if (a.state === 'roast') {
+    hand.copy(a.roastHand);
+    tip.copy(a.roastTip);
+    tip.x += Math.sin(t * 1.8) * 0.08;
+    tip.z += Math.cos(t * 1.4) * 0.06;
+    // 火弱或下雨时需要更久；旺火下约 7 秒烤好
+    const heat = (0.25 + 1.05 * fireHealth) * (1 - 0.35 * rainNow);
+    a.progress = Math.min(1, a.progress + dt * heat / 7);
+    marshmallowMat.color.copy(new THREE.Color(0xfff2d8)).lerp(new THREE.Color(0xa94d18), a.progress);
+    marshmallowMat.emissiveIntensity = 0.16 * a.progress * fireHealth;
+    if (a.progress >= 1) {
+      a.state = 'return';
+      a.time = 0;
+      showActivityMessage('roastDone');
+    }
+  } else {
+    const k = THREE.MathUtils.smoothstep(Math.min(1, a.time / 0.8), 0, 1);
+    hand.lerpVectors(a.roastHand, a.startHand, k);
+    tip.lerpVectors(a.roastTip, a.startTip, k);
+    if (k >= 1) {
+      a.state = 'idle';
+      skewer.visible = false;
+      return;
+    }
+  }
+  aimRod(skewer, skewerStick, marshmallow, hand, tip);
+  marshmallow.rotation.y = t * 1.65;
+}
+
+// 2) 水壶：三脚架悬在火焰上方加热，达到沸点后持续冒出水汽
+const kettle = new THREE.Group();
+const kettleMat = new THREE.MeshStandardMaterial({
+  color: 0x3d4650, metalness: 0.72, roughness: 0.32, emissive: 0x4a1804, emissiveIntensity: 0
+});
+const kettleBody = new THREE.Mesh(new THREE.SphereGeometry(0.27, 20, 14), kettleMat);
+kettleBody.scale.y = 0.82;
+kettleBody.position.y = 0.3;
+kettleBody.castShadow = true;
+const kettleLid = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.19, 0.045, 16), kettleMat);
+kettleLid.position.y = 0.53;
+const kettleKnob = new THREE.Mesh(new THREE.SphereGeometry(0.055, 12, 8), kettleMat);
+kettleKnob.scale.y = 0.62;
+kettleKnob.position.y = 0.59;
+const kettleSpout = new THREE.Group();
+const kettleSpoutTube = new THREE.Mesh(new THREE.CylinderGeometry(0.048, 0.09, 0.36, 12), kettleMat);
+kettleSpoutTube.position.y = 0.18;
+const kettleSpoutLip = new THREE.Mesh(new THREE.CylinderGeometry(0.078, 0.057, 0.065, 12), kettleMat);
+kettleSpoutLip.position.y = 0.39;
+kettleSpout.add(kettleSpoutTube, kettleSpoutLip);
+kettleSpout.position.set(0.21, 0.35, 0);
+kettleSpout.rotation.z = -1.17;
+const kettleHandle = new THREE.Mesh(
+  new THREE.TorusGeometry(0.31, 0.025, 8, 20, Math.PI),
+  new THREE.MeshStandardMaterial({ color: 0x21160f, roughness: 0.95 })
+);
+kettleHandle.position.y = 0.38;
+kettle.add(kettleBody, kettleLid, kettleKnob, kettleSpout, kettleHandle);
+const steamPuffs = [];
+for (let i = 0; i < 7; i++) {
+  const puff = new THREE.Mesh(
+    new THREE.SphereGeometry(0.065, 8, 6),
+    new THREE.MeshBasicMaterial({ color: 0xd9e1e7, transparent: true, opacity: 0, depthWrite: false })
+  );
+  kettle.add(puff);
+  steamPuffs.push(puff);
+}
+kettle.visible = false;
+scene.add(kettle);
+const KETTLE_REST = new THREE.Vector3(0.04, 0.56, 0.02);
+const kettleRig = new THREE.Group();
+const rigWoodMat = new THREE.MeshStandardMaterial({ color: 0x2c1a0d, roughness: 0.98 });
+const rigRopeMat = new THREE.MeshStandardMaterial({ color: 0x705033, roughness: 1 });
+const rigApex = new THREE.Vector3(0.04, 2.02, 0.02);
+for (const angle of [0.35, 2.45, 4.55]) {
+  const foot = new THREE.Vector3(Math.cos(angle) * 1.18, 0.03, Math.sin(angle) * 1.18);
+  kettleRig.add(makeBeamBetween(foot, rigApex, 0.035, rigWoodMat, 7));
+}
+const lash = new THREE.Mesh(new THREE.TorusGeometry(0.09, 0.018, 6, 16), rigRopeMat);
+lash.rotation.x = Math.PI / 2;
+lash.position.copy(rigApex).add(new THREE.Vector3(0, -0.06, 0));
+kettleRig.add(lash);
+const chainTop = rigApex.clone().add(new THREE.Vector3(0, -0.08, 0));
+const chainBottom = KETTLE_REST.clone().add(new THREE.Vector3(0, 0.71, 0));
+kettleRig.add(makeBeamBetween(chainTop, chainBottom, 0.012, rigRopeMat, 6));
+kettleRig.visible = false;
+scene.add(kettleRig);
+const kettleAction = {
+  state: 'idle', time: 0, progress: 0,
+  start: new THREE.Vector3(), rest: KETTLE_REST
+};
+
+function startKettle() {
+  if (kettleAction.state !== 'idle') return;
+  kettleAction.state = 'placing';
+  kettleAction.time = 0;
+  kettleAction.progress = 0;
+  kettleAction.start.copy(cameraSidePosition(2.2, 0.55));
+  kettle.position.copy(kettleAction.start);
+  kettle.visible = true;
+  kettleRig.visible = true;
+}
+
+function updateSteam(t, strength) {
+  for (let i = 0; i < steamPuffs.length; i++) {
+    const puff = steamPuffs[i];
+    const phase = (t * (0.34 + i * 0.015) + i / steamPuffs.length) % 1;
+    puff.position.set(
+      0.08 + Math.sin(t * 1.5 + i * 2.1) * 0.07 * phase,
+      0.58 + phase * 0.85,
+      Math.cos(t * 1.2 + i) * 0.045 * phase
+    );
+    puff.scale.setScalar(0.55 + phase * 1.8);
+    puff.material.opacity = Math.sin(Math.PI * phase) * 0.24 * strength;
+  }
+}
+
+function updateKettle(dt, t) {
+  const a = kettleAction;
+  if (a.state === 'idle') return;
+  a.time += dt;
+  if (a.state === 'placing') {
+    const k = THREE.MathUtils.smoothstep(Math.min(1, a.time / 0.75), 0, 1);
+    kettle.position.lerpVectors(a.start, a.rest, k);
+    kettle.position.y += Math.sin(Math.PI * k) * 0.28;
+    if (k >= 1) { a.state = 'heating'; a.time = 0; }
+  } else if (a.state === 'heating') {
+    const heat = (0.22 + 1.1 * fireHealth) * (1 - 0.45 * rainNow);
+    a.progress = Math.min(1, a.progress + dt * heat / 9);
+    kettleMat.emissiveIntensity = a.progress * 0.18 * fireHealth;
+    updateSteam(t, THREE.MathUtils.smoothstep(a.progress, 0.42, 1));
+    if (a.progress >= 1) {
+      a.state = 'ready';
+      a.time = 0;
+      showActivityMessage('kettleDone', 4);
+    }
+  } else if (a.state === 'ready') {
+    updateSteam(t, 1);
+    if (a.time >= 4) { a.state = 'removing'; a.time = 0; }
+  } else {
+    const k = THREE.MathUtils.smoothstep(Math.min(1, a.time / 0.8), 0, 1);
+    kettle.position.lerpVectors(a.rest, a.start, k);
+    kettle.position.y += Math.sin(Math.PI * k) * 0.25;
+    updateSteam(t, 1 - k);
+    if (k >= 1) {
+      a.state = 'idle';
+      kettle.visible = false;
+      kettleRig.visible = false;
+      kettleMat.emissiveIntensity = 0;
+    }
+  }
+}
+
+// 3) 火把：伸入火焰引燃后回到石圈旁，可再次点击熄灭
+const torch = new THREE.Group();
+const torchWood = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.043, 0.068, 1.08, 9),
+  new THREE.MeshStandardMaterial({ color: 0x593315, roughness: 0.96 })
+);
+torchWood.position.y = 0.54;
+torchWood.castShadow = true;
+const torchWrap = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.105, 0.08, 0.27, 10),
+  new THREE.MeshStandardMaterial({ color: 0x26150d, roughness: 1 })
+);
+torchWrap.position.y = 1.12;
+torchWrap.castShadow = true;
+const torchBands = new THREE.Group();
+const torchBandMat = new THREE.MeshStandardMaterial({ color: 0x8d5d31, roughness: 1 });
+for (const y of [1.02, 1.1, 1.18]) {
+  const band = new THREE.Mesh(new THREE.TorusGeometry(0.092, 0.012, 6, 14), torchBandMat);
+  band.rotation.x = Math.PI / 2;
+  band.position.y = y;
+  torchBands.add(band);
+}
+
+function makeTorchFlameTexture() {
+  const c = document.createElement('canvas');
+  c.width = 128;
+  c.height = 256;
+  const g = c.getContext('2d');
+  const outer = g.createLinearGradient(0, 250, 0, 5);
+  outer.addColorStop(0, 'rgba(255,70,5,0.96)');
+  outer.addColorStop(0.45, 'rgba(255,132,18,0.92)');
+  outer.addColorStop(0.78, 'rgba(255,190,55,0.7)');
+  outer.addColorStop(1, 'rgba(255,220,100,0)');
+  g.fillStyle = outer;
+  g.beginPath();
+  g.moveTo(64, 250);
+  g.bezierCurveTo(20, 224, 24, 164, 50, 118);
+  g.bezierCurveTo(72, 78, 70, 42, 79, 8);
+  g.bezierCurveTo(111, 74, 118, 135, 103, 188);
+  g.bezierCurveTo(95, 222, 82, 242, 64, 250);
+  g.closePath();
+  g.fill();
+  const inner = g.createLinearGradient(0, 232, 0, 82);
+  inner.addColorStop(0, 'rgba(255,255,210,0.98)');
+  inner.addColorStop(0.55, 'rgba(255,226,95,0.92)');
+  inner.addColorStop(1, 'rgba(255,150,24,0)');
+  g.fillStyle = inner;
+  g.beginPath();
+  g.moveTo(64, 230);
+  g.bezierCurveTo(43, 211, 46, 172, 61, 145);
+  g.bezierCurveTo(72, 126, 72, 105, 74, 84);
+  g.bezierCurveTo(94, 132, 91, 185, 78, 215);
+  g.bezierCurveTo(74, 224, 69, 229, 64, 230);
+  g.closePath();
+  g.fill();
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  return tex;
+}
+
+const torchFlame = new THREE.Group();
+const torchFlameSprite = new THREE.Sprite(
+  new THREE.SpriteMaterial({
+    map: makeTorchFlameTexture(),
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false
+  })
+);
+torchFlameSprite.position.y = 1.48;
+torchFlameSprite.scale.set(0.34, 0.62, 1);
+const torchGlow = new THREE.Sprite(
+  new THREE.SpriteMaterial({
+    map: radialTexture(64, [
+      [0, 'rgba(255,210,100,0.55)'], [0.45, 'rgba(255,100,25,0.2)'], [1, 'rgba(255,60,0,0)']
+    ]),
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    opacity: 0.7
+  })
+);
+torchGlow.position.y = 1.28;
+torchGlow.scale.set(0.55, 0.48, 1);
+const torchLight = new THREE.PointLight(0xff7928, 0, 6, 2);
+torchLight.position.y = 1.35;
+torchFlame.add(torchFlameSprite, torchGlow, torchLight);
+torch.add(torchWood, torchWrap, torchBands, torchFlame);
+scene.add(torch);
+const torchAction = {
+  state: 'unlit', time: 0,
+  stand: new THREE.Vector3(1.58, 0.02, -0.82),
+  ignite: new THREE.Vector3(0.76, 0.09, -0.1)
+};
+torch.position.copy(torchAction.stand);
+torchFlame.visible = false;
+
+function toggleTorch() {
+  const a = torchAction;
+  if (a.state === 'lit') {
+    a.state = 'unlit';
+    torchFlame.visible = false;
+    torchLight.intensity = 0;
+    showActivityMessage('torchOff');
+    return;
+  }
+  if (a.state !== 'unlit') return;
+  if (fireHealth < 0.12) {
+    showActivityMessage('needFire');
+    return;
+  }
+  a.state = 'lighting';
+  a.time = 0;
+}
+
+function updateTorch(dt, t) {
+  const a = torchAction;
+  if (a.state === 'lighting') {
+    a.time += dt;
+    const k = THREE.MathUtils.smoothstep(Math.min(1, a.time / 1.15), 0, 1);
+    torch.position.lerpVectors(a.stand, a.ignite, k);
+    torch.rotation.z = 1.05 * k;
+    if (k >= 1) {
+      torchFlame.visible = true;
+      a.state = 'returning';
+      a.time = 0;
+    }
+  } else if (a.state === 'returning') {
+    a.time += dt;
+    const k = THREE.MathUtils.smoothstep(Math.min(1, a.time / 0.85), 0, 1);
+    torch.position.lerpVectors(a.ignite, a.stand, k);
+    torch.rotation.z = 1.05 * (1 - k);
+    if (k >= 1) {
+      a.state = 'lit';
+      showActivityMessage('torchLit');
+    }
+  }
+  if (torchFlame.visible) {
+    const pulseX = 0.92 + 0.08 * Math.sin(t * 13) + 0.04 * Math.sin(t * 23);
+    const pulseY = 0.96 + 0.08 * Math.sin(t * 11 + 0.7);
+    torchFlameSprite.scale.set(0.34 * pulseX, 0.62 * pulseY, 1);
+    torchFlameSprite.position.x = windVX * 0.22 + Math.sin(t * 7) * 0.012;
+    torchFlameSprite.material.rotation = -windVX * 0.18 + Math.sin(t * 5.5) * 0.025;
+    torchGlow.material.opacity = 0.58 + 0.16 * Math.sin(t * 12);
+    torchLight.intensity = 5.5 * (0.82 + 0.25 * Math.sin(t * 14));
+  }
+}
+
+// 4) 松果：从镜头侧抛入，落入火堆后短暂燃烧并补充少量燃料
+const pinecones = [];
+function throwPinecone() {
+  const group = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0x3f2512, roughness: 0.95, emissive: 0xff4a0a, emissiveIntensity: 0
+  });
+  const core = new THREE.Mesh(new THREE.DodecahedronGeometry(0.12, 1), mat);
+  core.scale.set(0.76, 1.28, 0.76);
+  core.castShadow = true;
+  group.add(core);
+  for (let i = -2; i <= 2; i++) {
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.085 - Math.abs(i) * 0.008, 0.014, 5, 9), mat);
+    ring.rotation.x = Math.PI / 2;
+    ring.position.y = i * 0.055;
+    group.add(ring);
+  }
+  const start = cameraSidePosition(2.5, 1.15);
+  const target = new THREE.Vector3((Math.random() - 0.5) * 0.35, 0.2, (Math.random() - 0.5) * 0.35);
+  const T = 0.58 + Math.random() * 0.14;
+  group.position.copy(start);
+  scene.add(group);
+  pinecones.push({
+    group, mat, state: 'fly', age: 0,
+    vel: new THREE.Vector3(
+      (target.x - start.x) / T,
+      (target.y - start.y) / T + 4.9 * T,
+      (target.z - start.z) / T
+    ),
+    spin: new THREE.Vector3(6 + Math.random() * 6, 4 + Math.random() * 5, 5 + Math.random() * 7)
+  });
+  while (pinecones.length > 9) disposeObject3D(pinecones.shift().group);
+  showActivityMessage('pineconeThrown', 1.6);
+}
+
+function updatePinecones(dt) {
+  for (let i = pinecones.length - 1; i >= 0; i--) {
+    const p = pinecones[i];
+    p.age += dt;
+    if (p.state === 'fly') {
+      p.vel.y -= 9.8 * dt;
+      p.group.position.addScaledVector(p.vel, dt);
+      p.group.rotation.x += p.spin.x * dt;
+      p.group.rotation.y += p.spin.y * dt;
+      p.group.rotation.z += p.spin.z * dt;
+      if (p.vel.y < 0 && p.group.position.y <= 0.19) {
+        p.state = 'burn';
+        p.age = 0;
+        p.group.position.y = 0.19;
+        p.mat.emissiveIntensity = 1.1;
+        burstQueue.push({ x: p.group.position.x, y: 0.3, z: p.group.position.z, n: 15 });
+        fuelTarget = Math.min(6, fuelTarget + 0.22);
+        fuel = Math.min(fuelTarget, fuel + 0.08);
+        for (let k = 0; k < 2; k++) {
+          const s = smokes.find(o => !o.alive);
+          if (s) {
+            spawnSmoke(s);
+            s.x = p.group.position.x;
+            s.y = 0.28;
+            s.z = p.group.position.z;
+          }
+        }
+        if (audio) audio.playThud();
+      }
+    } else {
+      p.mat.color.lerp(new THREE.Color(0x100804), Math.min(1, dt * 0.8));
+      p.mat.emissiveIntensity = Math.max(0, (1 - p.age / 7) * (0.55 + flick));
+      p.group.scale.setScalar(Math.max(0.25, 1 - p.age / 9));
+      if (p.age >= 7.5) {
+        disposeObject3D(p.group);
+        pinecones.splice(i, 1);
+      }
+    }
+  }
+}
+
+function refreshActionButtons() {
+  const roastActive = marshmallowAction.state !== 'idle';
+  const kettleActive = kettleAction.state !== 'idle';
+  const torchBusy = torchAction.state === 'lighting' || torchAction.state === 'returning';
+  actionButtons.roast.disabled = roastActive;
+  actionButtons.kettle.disabled = kettleActive;
+  actionButtons.torch.disabled = torchBusy;
+  actionButtons.roast.classList.toggle('active', roastActive);
+  actionButtons.kettle.classList.toggle('active', kettleActive);
+  actionButtons.torch.classList.toggle('active', torchAction.state === 'lit' || torchBusy);
+  actionButtons.roast.textContent = roastActive
+    ? tr('roastProgress')(Math.round(marshmallowAction.progress * 100)) : tr('roast');
+  actionButtons.kettle.textContent = kettleActive
+    ? tr('kettleProgress')(Math.round(kettleAction.progress * 100)) : tr('kettle');
+  actionButtons.torch.textContent = torchAction.state === 'lit' ? tr('extinguishTorch') : tr('lightTorch');
+  actionButtons.pinecone.textContent = tr('throwPinecone');
+}
+
+function updateActivityUi(dt) {
+  activityUiTimer += dt;
+  if (activityUiTimer < 0.1) return;
+  activityUiTimer = 0;
+  refreshActionButtons();
+  const active = [];
+  if (marshmallowAction.state === 'roast') {
+    active.push(tr('roastStatus')(Math.round(marshmallowAction.progress * 100)));
+  }
+  if (kettleAction.state === 'heating') {
+    active.push(tr('kettleStatus')(Math.round(kettleAction.progress * 100)));
+  }
+  if (torchAction.state === 'lighting' || torchAction.state === 'returning') {
+    active.push(tr('torchLighting'));
+  }
+  if (active.length) {
+    activityStatus.textContent = active.join(' · ');
+  } else if (activityMessageKey && performance.now() < activityMessageUntil) {
+    activityStatus.textContent = tr(activityMessageKey);
+  } else {
+    activityStatus.textContent = '';
+  }
+}
+
+function updateCampActivities(dt, t) {
+  updateMarshmallow(dt, t);
+  updateKettle(dt, t);
+  updateTorch(dt, t);
+  updatePinecones(dt);
+  updateActivityUi(dt);
+}
+
+actionButtons.roast.addEventListener('click', startRoasting);
+actionButtons.kettle.addEventListener('click', startKettle);
+actionButtons.torch.addEventListener('click', toggleTorch);
+actionButtons.pinecone.addEventListener('click', () => {
+  throwPinecone();
+  actionButtons.pinecone.disabled = true;
+  setTimeout(() => { actionButtons.pinecone.disabled = false; }, 450);
+});
 
 // 每帧校验视口：窗口隐藏时浏览器报告 0 尺寸且恢复可见不一定触发 resize 事件
 let viewW = -1, viewH = -1;
@@ -1192,7 +2051,51 @@ function startAudio() {
     hissGain.gain.setTargetAtTime(0.05, now + 1.2, 0.8);
   };
 
-  audio = { ctx, roarGain, airFilter, crackleTimer, windGain, playThud };
+  // 7) 远处动物：夜枭低鸣（双声 hoo-hoo）+ 偶发蟋蟀虫鸣
+  //    非定位、随机稀疏触发；经听者主增益 → 受总音量控制
+  const critterBus = ctx.createGain();
+  critterBus.gain.value = 0.5;
+  critterBus.connect(listener.getInput());
+  const playOwl = () => {
+    const t0 = ctx.currentTime;
+    for (let k = 0; k < 2; k++) {                       // 两声
+      const base = 350 + Math.random() * 70;
+      const o = ctx.createOscillator(); o.type = 'sine';
+      o.frequency.setValueAtTime(base * 1.18, t0 + k * 0.5);
+      o.frequency.exponentialRampToValueAtTime(base, t0 + k * 0.5 + 0.18);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t0 + k * 0.5);
+      g.gain.exponentialRampToValueAtTime(0.16, t0 + k * 0.5 + 0.04);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + k * 0.5 + 0.34);
+      const o2 = ctx.createOscillator(); o2.type = 'sine'; o2.frequency.value = base * 2;
+      const g2 = ctx.createGain(); g2.gain.value = 0.05;
+      o2.connect(g2).connect(g);
+      o.connect(g).connect(critterBus);
+      o.start(t0 + k * 0.5); o.stop(t0 + k * 0.5 + 0.4);
+      o2.start(t0 + k * 0.5); o2.stop(t0 + k * 0.5 + 0.4);
+    }
+  };
+  const playCricket = () => {
+    const t0 = ctx.currentTime, n = 3 + (Math.random() * 4 | 0);
+    for (let k = 0; k < n; k++) {                       // 一串短促颤鸣
+      const ts = t0 + k * 0.13;
+      const o = ctx.createOscillator(); o.type = 'triangle';
+      o.frequency.value = 4200 + Math.random() * 600;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, ts);
+      g.gain.exponentialRampToValueAtTime(0.05, ts + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, ts + 0.06);
+      o.connect(g).connect(critterBus);
+      o.start(ts); o.stop(ts + 0.08);
+    }
+  };
+  const critterTimer = setInterval(() => {             // 每 8s 掷骰 → 平均十几秒一声
+    const r = Math.random();
+    if (r < 0.4) playOwl();
+    else if (r < 0.85) playCricket();
+  }, 8000);
+
+  audio = { ctx, roarGain, airFilter, crackleTimer, critterTimer, windGain, playThud };
 }
 
 /* ============================================================
@@ -1205,6 +2108,23 @@ const I18N = {
     ovEnter: '点击任意处进入（开启声音）',
     ovHint: '拖动旋转 · 滚轮缩放 —— 远离篝火，声音按 1/r 衰减',
     addLog: '🪵 加柴',
+    lowFire: '🪵 火势渐弱——点「加柴」续燃',
+    roast: '🍡 烤棉花糖',
+    kettle: '🫖 煮水',
+    lightTorch: '🔥 点燃火把',
+    extinguishTorch: '💨 熄灭火把',
+    throwPinecone: '🌰 投掷松果',
+    roastProgress: p => `🍡 烘烤 ${p}%`,
+    kettleProgress: p => `🫖 加热 ${p}%`,
+    roastStatus: p => `棉花糖烘烤中 ${p}%`,
+    kettleStatus: p => `水温上升中 ${p}%`,
+    torchLighting: '火把正在引燃',
+    roastDone: '棉花糖烤好了，表面已经焦糖化',
+    kettleDone: '水已经沸腾，可以冲一杯热饮',
+    torchLit: '火把已点燃',
+    torchOff: '火把已熄灭',
+    needFire: '火势太弱，先加一根木柴',
+    pineconeThrown: '松果落入火堆，迸出了一阵火星',
     panelTitle: '⚙ 参数调节',
     gFlame: '火 焰', gSound: '声 音', gEnv: '环 境',
     fireScale: '火势',
@@ -1221,6 +2141,13 @@ const I18N = {
     rolloffTip: '1 = 物理真实的 1/r 衰减；越大衰减越快',
     airAbsorb: '空气高频吸收',
     airAbsorbTip: '距离越远高频损失越多；0 = 关闭',
+    gWeather: '天 气',
+    rain: '细雨',
+    rainTip: '细雨强度：雨中火势减弱、水汽更多、雾更浓；雨丝被风吹斜',
+    cloud: '云量',
+    cloudTip: '云层厚度与遮月程度：越厚月光越暗、云层越不透明',
+    moonPhase: '月相',
+    moonPhaseTip: '月相角度（度）：0≈满月，90≈上弦，138 标准蛾眉月，180≈新月',
     moonInt: '月光强度',
     fog: '雾浓度',
     exposure: '曝光',
@@ -1236,6 +2163,23 @@ const I18N = {
     ovEnter: 'Click anywhere to enter (sound on)',
     ovHint: 'Drag to orbit · scroll to zoom — sound fades as 1/r from the fire',
     addLog: '🪵 Add log',
+    lowFire: '🪵 The fire is dying — click “Add log” to keep it going',
+    roast: '🍡 Roast marshmallow',
+    kettle: '🫖 Boil water',
+    lightTorch: '🔥 Light torch',
+    extinguishTorch: '💨 Extinguish torch',
+    throwPinecone: '🌰 Toss pinecone',
+    roastProgress: p => `🍡 Roasting ${p}%`,
+    kettleProgress: p => `🫖 Heating ${p}%`,
+    roastStatus: p => `Marshmallow roasting ${p}%`,
+    kettleStatus: p => `Water heating ${p}%`,
+    torchLighting: 'Lighting the torch',
+    roastDone: 'The marshmallow is toasted and caramelized',
+    kettleDone: 'The water is boiling and ready for a hot drink',
+    torchLit: 'The torch is lit',
+    torchOff: 'The torch is out',
+    needFire: 'The fire is too weak — add a log first',
+    pineconeThrown: 'The pinecone lands in the fire with a burst of sparks',
     panelTitle: '⚙ Parameters',
     gFlame: 'Flame', gSound: 'Sound', gEnv: 'Environment',
     fireScale: 'Fire intensity',
@@ -1252,6 +2196,13 @@ const I18N = {
     rolloffTip: '1 = physically correct 1/r falloff; larger = faster falloff',
     airAbsorb: 'Air HF absorption',
     airAbsorbTip: 'The farther away, the more highs are lost; 0 = off',
+    gWeather: 'Weather',
+    rain: 'Drizzle',
+    rainTip: 'Rain intensity: the fire weakens, more steam, thicker fog; rain is blown by the wind',
+    cloud: 'Cloudiness',
+    cloudTip: 'Cloud thickness and moon occlusion: thicker = dimmer moon and more opaque clouds',
+    moonPhase: 'Moon phase',
+    moonPhaseTip: 'Phase angle (deg): 0≈full, 90≈quarter, 138 standard crescent, 180≈new',
     moonInt: 'Moonlight',
     fog: 'Fog density',
     exposure: 'Exposure',
@@ -1267,6 +2218,23 @@ const I18N = {
     ovEnter: '画面をクリックして開始（音が出ます）',
     ovHint: 'ドラッグで回転 · ホイールでズーム —— 焚き火から離れると音は 1/r で減衰',
     addLog: '🪵 薪をくべる',
+    lowFire: '🪵 火が弱まっています——「薪をくべる」で継続',
+    roast: '🍡 マシュマロを焼く',
+    kettle: '🫖 お湯を沸かす',
+    lightTorch: '🔥 松明に火をつける',
+    extinguishTorch: '💨 松明を消す',
+    throwPinecone: '🌰 松ぼっくりを投げる',
+    roastProgress: p => `🍡 焼き中 ${p}%`,
+    kettleProgress: p => `🫖 加熱中 ${p}%`,
+    roastStatus: p => `マシュマロを焼いています ${p}%`,
+    kettleStatus: p => `お湯を沸かしています ${p}%`,
+    torchLighting: '松明に火を移しています',
+    roastDone: 'マシュマロが香ばしく焼けました',
+    kettleDone: 'お湯が沸きました。温かい飲み物を作れます',
+    torchLit: '松明に火がつきました',
+    torchOff: '松明を消しました',
+    needFire: '火が弱すぎます。先に薪をくべてください',
+    pineconeThrown: '松ぼっくりが火に入り、火の粉が舞いました',
     panelTitle: '⚙ パラメータ',
     gFlame: '炎', gSound: '音', gEnv: '環 境',
     fireScale: '火の勢い',
@@ -1283,6 +2251,13 @@ const I18N = {
     rolloffTip: '1 = 物理的に正しい 1/r 減衰。大きいほど減衰が速い',
     airAbsorb: '空気の高音吸収',
     airAbsorbTip: '距離が遠いほど高音が失われます。0 = オフ',
+    gWeather: '天 気',
+    rain: '小雨',
+    rainTip: '雨の強さ：雨で火は弱まり、水蒸気が増え、霧が濃くなる。雨脚は風で斜めに',
+    cloud: '雲量',
+    cloudTip: '雲の厚さと月の隠れ具合：厚いほど月は暗く、雲は不透明に',
+    moonPhase: '月相',
+    moonPhaseTip: '月相角（度）：0≈満月、90≈上弦、138 標準的な三日月、180≈新月',
     moonInt: '月光の強さ',
     fog: '霧の濃さ',
     exposure: '露出',
@@ -1329,6 +2304,7 @@ function applyLang(l) {
   for (const b of boundTexts) b.el.textContent = tr(b.key);
   for (const b of boundTips) b.el.title = tr(b.key);
   for (const btn of langBtns) btn.classList.toggle('active', btn.dataset.lang === l);
+  refreshActionButtons();
   hudTimer = 1;   // 让 HUD 在下一帧立即用新语言重绘
 }
 for (const btn of langBtns) btn.addEventListener('click', () => applyLang(btn.dataset.lang));
@@ -1351,7 +2327,11 @@ let flick = 0.5;
 let lightFlick = 0.5;
 const lightBase = new THREE.Vector3().copy(FIRE_POS);   // 光源慢分量：低通跟随火焰质心
 const lightJit  = new THREE.Vector3();                  // 光源快分量：OU 随机抖动 → 影子闪动
-let windNow = 0.22;   // 瞬时风速（含阵风）
+let windNow = 0.22;   // 瞬时风速（标量幅度，含阵风）
+let windDir = 0.5;    // 风向（弧度，缓慢漂移）
+let windVX = 0.19, windVZ = 0.10;   // 风矢量 = windNow×(cos,sin)，供火焰/火星/烟/雨共用
+let rainNow = 0, cloudNow = 0.25;   // 平滑后的天气量（追随 P.rain / P.cloud）
+let lastMoonPhase = -1;             // 月相变化时才重算太阳方向
 let hudTimer = 0;
 
 function animate() {
@@ -1367,10 +2347,19 @@ function step(dt, t) {
   flick = Math.max(0, Math.min(1, flick));
   // 燃料燃烧模型：新柴先闷烧（fuel 落后于 fuelTarget，期间大量冒烟），
   // 引燃后火势增强，随后以 ~50s 时间常数缓慢烧尽
-  fuelTarget *= Math.exp(-dt / 50);
-  if (fuelTarget < 0.01) fuelTarget = 0;
-  fuel += (fuelTarget - fuel) * Math.min(1, dt * 0.45);
-  fireDrive = P.fireScale * (1 + 0.3 * fuel);
+  // 燃料燃烧模型：木柴随燃烧被消耗（火越旺烧得越快），不添柴则火势跌回余烬
+  fuelTarget *= Math.exp(-dt / 38 * (0.7 + 0.5 * P.fireScale));
+  if (fuelTarget < 0.005) fuelTarget = 0;
+  fuel += (fuelTarget - fuel) * Math.min(1, dt * 0.5);
+  fireHealth = fuel / (fuel + 0.8);                       // 0（余烬）→ ~1（旺火），饱和曲线
+  fireDrive = P.fireScale * (0.26 + 1.05 * fireHealth);   // 无柴时降到余烬强度，需续柴维持
+  // 柴堆炭化与坍塌：随燃尽程度（1-fireHealth）渐进，平滑跟随
+  collapseAmt += ((1 - fireHealth) - collapseAmt) * Math.min(1, dt * 0.5);
+  barkMat.color.copy(BARK_FRESH).lerp(BARK_CHAR, collapseAmt);   // 树皮渐黑
+  for (const L of teepeeLogs) {                           // 内端下沉、teepee 渐塌
+    L.group.quaternion.copy(L.baseQuat).slerp(L.flatQuat, collapseAmt * 0.7);
+    L.group.position.y = L.baseY - collapseAmt * 0.05;
+  }
   updateAddedLogs(dt);
 
   // 火光亮度闪烁：响应越快，影子的明暗闪动越明显
@@ -1383,8 +2372,32 @@ function step(dt, t) {
   // 恒定风只让火焰静态倾斜；阵风才让火焰和影子持续摆动
   windNow += (P.wind - windNow) * 1.6 * dt + (Math.random() - 0.5) * P.wind * 3.5 * Math.sqrt(dt);
   windNow = Math.max(0, Math.min(windNow, P.wind * 2.5 + 0.02));
-  charMat.emissiveIntensity = 1.0 + 1.2 * flick;
-  emberGlow.material.opacity = 0.55 + 0.45 * flick;
+
+  // —— 天气系统 ——
+  windDir += (Math.random() - 0.5) * dt * 0.4;                 // 风向缓慢漂移
+  windVX = windNow * Math.cos(windDir);                        // 风矢量（火焰/火星/烟/雨共用）
+  windVZ = windNow * Math.sin(windDir);
+  rainNow += (P.rain - rainNow) * Math.min(1, dt * 0.6);       // 雨/云量平滑跟随滑块
+  cloudNow += (P.cloud - cloudNow) * Math.min(1, dt * 0.5);
+  fireLight.intensity *= (1 - 0.34 * rainNow);                 // 雨打火堆：火光减弱
+  fireFill.intensity *= (1 - 0.34 * rainNow);
+  scene.fog.density = P.fog + rainNow * 0.018 + cloudNow * 0.004;   // 雨/云加浓雾
+  if (P.moonPhase !== lastMoonPhase) { setMoonPhase(P.moonPhase); lastMoonPhase = P.moonPhase; }
+  for (const c of clouds) {                                    // 云层横向漂移 + 遮月加厚
+    c.off += c.speed * (0.6 + windNow) * dt;
+    if (c.off > 240) c.off -= 480;
+    c.sprite.position.copy(c.base).addScaledVector(moonSide, c.off);
+    c.sprite.material.opacity = Math.min(0.95, c.baseOp * (0.5 + 1.5 * cloudNow));
+  }
+  moonLight.intensity = P.moonInt * (1 - 0.7 * cloudNow);      // 云厚则月光与月面压暗
+  if (moonMat)  moonMat.uniforms.uDim.value = 1 - 0.7 * cloudNow;
+  if (moonHalo) moonHalo.material.opacity = 1 - 0.6 * cloudNow;
+  // 提灯：稳定暖光中带极轻摇曳
+  const lanternFlick = 0.9 + 0.07 * Math.sin(t * 6.3) + 0.03 * Math.sin(t * 23.1);
+  campLight.intensity = 4.5 * lanternFlick;
+  if (lanternGlowMat) lanternGlowMat.emissiveIntensity = 2.4 * lanternFlick;
+  charMat.emissiveIntensity = (0.35 + 1.35 * fireHealth) * (0.8 + 0.55 * flick);   // 炭随火势冷却变暗
+  emberGlow.material.opacity = (0.3 + 0.55 * fireHealth) * (0.6 + 0.5 * flick);
   for (const e of emberBed) {
     e.mat.emissiveIntensity = e.base * (0.55 + 0.45 * flick + 0.3 * Math.sin(t * e.speed + e.phase));
   }
@@ -1392,6 +2405,11 @@ function step(dt, t) {
   updateFlames(dt, t, flick);
   updateSparks(dt, t, flick);
   updateSmoke(dt, t);
+  updateRain(dt);
+  updateFireflies(dt, t);
+  updateMoths(dt, t);
+  updateTreeSway(dt, t);
+  updateCampActivities(dt, t);
 
   // 影子运动 = 慢分量 + 快分量
   // 慢分量：光源低通跟随火焰质心，影子随风整体偏摆（限幅防止极端偏移）
@@ -1417,8 +2435,8 @@ function step(dt, t) {
   if (audio) {
     // 火势与音量联动
     audio.roarGain.gain.value = 0.42 * (0.75 + 0.5 * flick) * (0.45 + 0.55 * fireDrive);
-    // 阵风掠过时风声随之增强
-    audio.windGain.gain.value = Math.min(0.13, 0.025 + 0.055 * windNow);
+    // 阵风掠过时风声随之增强；细雨叠加水汽嘶声
+    audio.windGain.gain.value = Math.min(0.2, 0.025 + 0.055 * windNow + 0.09 * rainNow);
     // 空气吸收：高频随距离指数衰减
     const d = camera.position.distanceTo(FIRE_POS);
     const cutoff = 400 + 11600 * Math.exp(-d * P.airAbsorb / 30);
@@ -1430,8 +2448,9 @@ function step(dt, t) {
     hudTimer = 0;
     const d = camera.position.distanceTo(FIRE_POS);
     const fuelStr = fuelTarget > 0.05
-      ? tr('hudFuel')(fuelTarget.toFixed(1), (1 + 0.3 * fuel).toFixed(2)) : '';
-    hud.textContent = tr('hud')(d.toFixed(1), windNow.toFixed(2), P.wind.toFixed(2), fuelStr);
+      ? tr('hudFuel')(fuelTarget.toFixed(1), (fireDrive / Math.max(0.01, P.fireScale)).toFixed(2)) : '';
+    const lowStr = fireHealth < 0.32 ? '\n' + tr('lowFire') : '';
+    hud.textContent = tr('hud')(d.toFixed(1), windNow.toFixed(2), P.wind.toFixed(2), fuelStr) + lowStr;
   }
 
   starMat.uniforms.uTime.value = t;   // 星光闪烁
@@ -1462,6 +2481,11 @@ animate();
       ['rolloff', 0, 4, 0.05,
         v => { P.rolloff = v; fireSound.setRolloffFactor(v); }, true],
       ['airAbsorb', 0, 3, 0.05, null, true]
+    ]],
+    ['gWeather', [
+      ['rain', 0, 1, 0.01, null, true],
+      ['cloud', 0, 1, 0.01, null, true],
+      ['moonPhase', 0, 180, 1, null, true]
     ]],
     ['gEnv', [
       ['moonInt', 0, 0.6, 0.01,
@@ -1526,7 +2550,10 @@ animate();
 applyLang(lang);
 
 // 调试钩子：在 rAF 被节流的环境（如隐藏窗口）中手动驱动帧
-window.__campfire = { renderer, scene, camera, step, P, applyLang };
+window.__campfire = {
+  renderer, scene, camera, step, P, applyLang, tossLog,
+  startRoasting, startKettle, toggleTorch, throwPinecone,
+  getFuel: () => ({ fuel, fuelTarget, fireHealth, fireDrive, collapseAmt }) };
 
 addEventListener('resize', fitViewport);
 </script>
