@@ -578,20 +578,91 @@ function placeProp(group, az, r, faceIn = true) {
   campProps.push(group);
 }
 
-// 帐篷：三角棱柱（脊形帐），+Z 端开一道暗门朝火
+// 帐篷：脊形帐，帐布带垂坠下陷（中段帆布下沉、檐口外张）+ 拉绳地钉 + 软门帘
 function makeTent() {
   const g = new THREE.Group();
-  const W = 1.5, H = 1.05, D = 1.9;
-  const tri = new THREE.Shape();
-  tri.moveTo(-W / 2, 0); tri.lineTo(W / 2, 0); tri.lineTo(0, H); tri.closePath();
-  const geo = new THREE.ExtrudeGeometry(tri, { depth: D, bevelEnabled: false });
-  geo.translate(0, 0, -D / 2);
-  const fab = new THREE.MeshStandardMaterial({ color: 0x2f5d4a, roughness: 0.92, side: THREE.DoubleSide });
-  g.add(new THREE.Mesh(geo, fab));
-  const door = new THREE.Mesh(new THREE.PlaneGeometry(W * 0.34, H * 0.66),
-    new THREE.MeshStandardMaterial({ color: 0x0a0f0c, roughness: 1 }));
-  door.position.set(0, H * 0.32, D / 2 + 0.004);
-  g.add(door);
+  const W = 1.6, H = 1.06, D = 1.95;
+  const fab = new THREE.MeshStandardMaterial({ color: 0x3a6651, roughness: 0.93, side: THREE.DoubleSide });
+  const fabIn = new THREE.MeshStandardMaterial({ color: 0x0c1611, roughness: 1, side: THREE.DoubleSide });
+  const rope = new THREE.MeshStandardMaterial({ color: 0x9a8a63, roughness: 1 });
+  const peg = new THREE.MeshStandardMaterial({ color: 0x241a10, roughness: 1 });
+  const RIDGE_SAG = 0.075, PANEL_SAG = 0.12, EAVE_FLARE = 0.14;
+
+  // 帐布脊线随深度的高度（两端立柱撑起、中段微沉）
+  const ridgeY = v => H - RIDGE_SAG * Math.sin(Math.PI * v);
+  // 单侧帐布面（side=±1）：基边在地、顶边到脊；中段帆布向下、向内垂坠
+  function sidePanel(side) {
+    const NU = 5, NV = 10, pos = [], idx = [];
+    for (let iv = 0; iv <= NV; iv++) {
+      const v = iv / NV, z = -D / 2 + v * D, sagV = Math.sin(Math.PI * v);
+      const ry = ridgeY(v);
+      const baseX = side * (W / 2 + EAVE_FLARE * sagV);   // 檐口中段外张
+      for (let iu = 0; iu <= NU; iu++) {
+        const u = iu / NU;                                 // 0 基边 → 1 脊
+        let x = baseX * (1 - u);
+        let y = ry * u;
+        const slope = Math.sin(Math.PI * u);               // 坡面中段下陷最深
+        y -= PANEL_SAG * sagV * slope;
+        x -= side * 0.06 * sagV * slope;                   // 同时微向内收
+        pos.push(x, y, z);
+      }
+    }
+    for (let iv = 0; iv < NV; iv++) for (let iu = 0; iu < NU; iu++) {
+      const a = iv * (NU + 1) + iu, b = a + 1, c = a + (NU + 1), d = c + 1;
+      idx.push(a, c, b, b, c, d);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setIndex(idx); geo.computeVertexNormals();
+    return new THREE.Mesh(geo, fab);
+  }
+  g.add(sidePanel(1), sidePanel(-1));
+
+  // 后墙：封闭三角
+  const back = new THREE.Shape();
+  back.moveTo(-W / 2, 0); back.lineTo(W / 2, 0); back.lineTo(0, ridgeY(0)); back.closePath();
+  const backMesh = new THREE.Mesh(new THREE.ShapeGeometry(back), fab);
+  backMesh.position.z = -D / 2; backMesh.rotation.y = Math.PI;
+  g.add(backMesh);
+
+  // 前墙：三角开门洞（梯形门），洞后置暗色内壁显出深度
+  const front = new THREE.Shape();
+  front.moveTo(-W / 2, 0); front.lineTo(W / 2, 0); front.lineTo(0, ridgeY(1)); front.closePath();
+  const dw = W * 0.16, dh = H * 0.62;
+  const hole = new THREE.Path();
+  hole.moveTo(-dw, 0); hole.lineTo(dw, 0); hole.lineTo(dw * 0.55, dh); hole.lineTo(-dw * 0.55, dh); hole.closePath();
+  front.holes.push(hole);
+  const frontMesh = new THREE.Mesh(new THREE.ShapeGeometry(front), fab);
+  frontMesh.position.z = D / 2;
+  g.add(frontMesh);
+  const inner = new THREE.Mesh(new THREE.PlaneGeometry(W * 0.5, dh + 0.1), fabIn);
+  inner.position.set(0, dh * 0.5, D / 2 - 0.28);
+  g.add(inner);
+
+  // 掀开的门帘：一片梯形帆布，绕左缘向外翻开
+  const flapShape = new THREE.Shape();
+  flapShape.moveTo(0, 0); flapShape.lineTo(dw * 1.9, 0); flapShape.lineTo(dw * 1.5, dh); flapShape.lineTo(0, dh); flapShape.closePath();
+  const flap = new THREE.Mesh(new THREE.ShapeGeometry(flapShape), fab);
+  flap.position.set(-dw, 0, D / 2 + 0.01);
+  flap.rotation.y = -0.9;                                 // 向外掀开
+  g.add(flap);
+
+  // 拉绳 + 地钉：从两端脊顶斜拉到地面
+  function strut(p1, p2, radius, mat) {
+    const dir = new THREE.Vector3().subVectors(p2, p1), len = dir.length();
+    const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, len, 5), mat);
+    mesh.position.copy(p1).addScaledVector(dir, 0.5);
+    mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+    return mesh;
+  }
+  for (const sz of [-1, 1]) {
+    const peak = new THREE.Vector3(0, ridgeY(sz > 0 ? 1 : 0) - 0.02, sz * (D / 2 - 0.02));
+    const stake = new THREE.Vector3(0, 0, sz * (D / 2 + 0.55));
+    g.add(strut(peak, stake, 0.006, rope));
+    const pegM = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.008, 0.12, 5), peg);
+    pegM.position.copy(stake).setY(0.04); pegM.rotation.x = sz * 0.3;
+    g.add(pegM);
+  }
   return g;
 }
 
@@ -616,23 +687,40 @@ function makeChair() {
   return g;
 }
 
-// 背包：圆鼓的软袋（胶囊体）+ 扁圆顶盖 + 前袋 + 弯肩带 + 提环（不再方正）
+// 背包：矮胖软包身 + 前探翻盖 + 前袋 + 正面压缩带 + 贴背肩带 + 底部睡垫卷
+// （刻意压低、加宽并打破对称，避免"躯干+头+手臂"的诡异人形剪影）
 function makeBackpack() {
   const g = new THREE.Group();
-  const m = new THREE.MeshStandardMaterial({ color: 0x3a4b2c, roughness: 0.95 });
-  const m2 = new THREE.MeshStandardMaterial({ color: 0x2a3720, roughness: 0.95 });
-  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.16, 0.2, 6, 16), m);
-  body.scale.set(1.05, 1, 0.72); body.position.y = 0.27; g.add(body);            // 鼓胀软袋
-  const lid = new THREE.Mesh(new THREE.SphereGeometry(0.16, 16, 12), m);
-  lid.scale.set(1.06, 0.52, 0.75); lid.position.y = 0.46; g.add(lid);            // 扁圆顶盖
-  const pocket = new THREE.Mesh(new THREE.CapsuleGeometry(0.11, 0.08, 5, 14), m2);
-  pocket.scale.set(1, 1, 0.5); pocket.position.set(0, 0.2, 0.14); g.add(pocket); // 前袋（贴前面）
-  for (const sx of [-0.08, 0.08]) {
-    const strap = new THREE.Mesh(new THREE.CapsuleGeometry(0.022, 0.3, 4, 8), m2);
-    strap.position.set(sx, 0.3, -0.15); strap.rotation.x = 0.16; g.add(strap);   // 弯肩带（背面）
+  const m  = new THREE.MeshStandardMaterial({ color: 0x586a3c, roughness: 0.95 });   // 橄榄绿（提亮，夜里不至于全黑）
+  const m2 = new THREE.MeshStandardMaterial({ color: 0x3d4727, roughness: 0.95 });
+  const m3 = new THREE.MeshStandardMaterial({ color: 0x262b12, roughness: 0.9 });    // 带/绳/扣
+  // 主体：圆角软包（略高于宽，背面较平）
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.17, 0.2, 8, 16), m);
+  body.scale.set(1.0, 1.0, 0.6); body.position.set(0, 0.3, 0); g.add(body);
+  // 顶盖：贴合顶部的小圆盖（不外伸成蘑菇沿）
+  const lid = new THREE.Mesh(new THREE.SphereGeometry(0.165, 18, 12), m);
+  lid.scale.set(1.0, 0.5, 0.64); lid.position.set(0, 0.5, 0.015); g.add(lid);
+  // 顶盖压带：单条从盖顶翻到正面（居中，避免"两眼"），末端一只带扣
+  const overStrap = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.24, 0.015), m3);
+  overStrap.position.set(0, 0.43, 0.135); overStrap.rotation.x = 0.2; g.add(overStrap);
+  const buckle = new THREE.Mesh(new THREE.BoxGeometry(0.058, 0.03, 0.024), m3);
+  buckle.position.set(0, 0.31, 0.16); g.add(buckle);
+  // 前袋：偏下的横向扁鼓袋（横置胶囊，不再是正圆"脸"）
+  const pocket = new THREE.Mesh(new THREE.CapsuleGeometry(0.058, 0.16, 6, 12), m2);
+  pocket.rotation.z = Math.PI / 2; pocket.scale.set(1, 1, 0.5); pocket.position.set(0, 0.17, 0.14); g.add(pocket);
+  // 两道横向束带（环身半圈，强化"包"的结构）
+  for (const sy of [0.24, 0.4]) {
+    const cinch = new THREE.Mesh(new THREE.TorusGeometry(0.172, 0.011, 6, 18, Math.PI * 1.3), m3);
+    cinch.scale.set(1, 1, 0.6); cinch.position.set(0, sy, 0); cinch.rotation.set(Math.PI / 2, 0, Math.PI * 0.85); g.add(cinch);
   }
-  const loop = new THREE.Mesh(new THREE.TorusGeometry(0.04, 0.012, 6, 12), m2);
-  loop.position.set(0, 0.54, -0.02); loop.rotation.x = Math.PI / 2; g.add(loop); // 顶部提环
+  // 贴背肩带：两条弯带（贴合主体、不外张成"手臂"）
+  for (const sx of [-0.06, 0.06]) {
+    const strap = new THREE.Mesh(new THREE.CapsuleGeometry(0.018, 0.22, 4, 8), m2);
+    strap.scale.set(1, 1, 0.5); strap.position.set(sx, 0.3, -0.1); strap.rotation.x = -0.06; g.add(strap);
+  }
+  // 顶部提环
+  const loop = new THREE.Mesh(new THREE.TorusGeometry(0.03, 0.01, 6, 12), m3);
+  loop.position.set(0, 0.56, -0.02); loop.rotation.x = Math.PI / 2; g.add(loop);
   return g;
 }
 
@@ -859,7 +947,7 @@ function makeParticleSystem(count, softness, blending) {
 function updateScales() {
   // 把粒子的"世界尺寸"换算到屏幕像素：size * (h / 2tan(fov/2)) / z
   const s = renderer.domElement.height / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
-  for (const ps of [flameSys, sparkSys, smokeSys, rainSys, fireflySys]) ps.mat.uniforms.uScale.value = s;
+  for (const ps of [flameSys, sparkSys, smokeSys, rainSys, fireflySys, torchFlameSys]) ps.mat.uniforms.uScale.value = s;
 }
 
 /* ============================================================
@@ -1230,6 +1318,64 @@ function updateTreeSway(dt, t) {
     tr.g.rotation.x = Math.sin(t * tr.sp + tr.ph) * sway;
     tr.g.rotation.z = Math.cos(t * tr.sp * 0.8 + tr.ph) * sway * 0.7;
   }
+}
+
+/* ============================================================
+   火把火焰：小型粒子焰（替代扁平贴图，有体积、跳动、随火把移动和风摆）
+   粒子在世界空间从火把头发射 → 浮升 + 向发射柱收束 + 湍流抖动 + 随风倾斜
+   ============================================================ */
+const TORCH_FLAME_N = 120;
+const torchFlameSys = makeParticleSystem(TORCH_FLAME_N, '0.05', THREE.AdditiveBlending);
+const torchParts = [];
+for (let i = 0; i < TORCH_FLAME_N; i++) {
+  torchParts.push({ life: 1, maxLife: 1, x: 0, y: -10, z: 0, cx: 0, cz: 0, vx: 0, vy: 0, vz: 0, seed: Math.random() * 100 });
+  torchFlameSys.al[i] = 0;
+}
+torchFlameSys.g.attributes.aAlpha.needsUpdate = true;
+// 火把焰色带：白热核心 → 明黄 → 橙 → 暗红焰尖
+const TORCH_RAMP = [
+  [0.00, 1.00, 0.96, 0.74], [0.32, 1.00, 0.72, 0.24], [0.66, 1.00, 0.40, 0.07], [1.00, 0.55, 0.07, 0.01]
+];
+const _tc = [0, 0, 0];
+// ign=引燃进度(0→1)，(ex,ey,ez)=火把头世界坐标（每帧由 updateTorch 传入）
+function updateTorchFlame(dt, t, ign, ex, ey, ez) {
+  const spawnable = ign > 0.02;
+  for (let i = 0; i < TORCH_FLAME_N; i++) {
+    const p = torchParts[i];
+    p.life += dt;
+    if (p.life >= p.maxLife) {
+      if (!spawnable) { torchFlameSys.al[i] = 0; continue; }
+      const a = Math.random() * Math.PI * 2, r = 0.088 * Math.sqrt(Math.random());  // 宽焰根，覆盖缠布顶（似在燃烧缠布）
+      p.cx = ex; p.cz = ez;                                          // 收束目标 = 火把轴心
+      p.x = ex + Math.cos(a) * r; p.y = ey + (Math.random() - 0.4) * 0.05; p.z = ez + Math.sin(a) * r;
+      p.vx = (Math.random() - 0.5) * 0.08;
+      p.vy = 0.24 + Math.random() * 0.34;                                  // 初速降低，焰根不立刻窜离
+      p.vz = (Math.random() - 0.5) * 0.08;
+      p.maxLife = 0.32 + Math.random() * 0.30;
+      p.life = 0;
+      p.seed = Math.random() * 100;
+    }
+    const f = p.life / p.maxLife;
+    p.vy += 2.3 * (1 - 0.45 * f) * dt;                              // 热浮升力
+    const k = Math.max(0, 1 - 1.7 * dt);                           // 空气阻力
+    p.vx *= k; p.vy *= k; p.vz *= k;
+    p.vx += Math.sin(t * 9 + p.seed * 1.7 + p.y * 5) * 0.55 * dt;  // 湍流
+    p.vz += Math.cos(t * 8 + p.seed * 2.3 + p.y * 5) * 0.55 * dt;
+    const conv = 1.0 + 5.5 * f;                                    // 焰根宽、随上升向轴心收束 → 窄焰尖
+    p.vx += (p.cx - p.x) * conv * dt;
+    p.vz += (p.cz - p.z) * conv * dt;
+    p.vx += windVX * 1.4 * dt; p.vz += windVZ * 1.4 * dt;          // 随风倾斜
+    p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
+    torchFlameSys.pos[i*3] = p.x; torchFlameSys.pos[i*3+1] = p.y; torchFlameSys.pos[i*3+2] = p.z;
+    flameColor(f, TORCH_RAMP, _tc);
+    torchFlameSys.col[i*3] = _tc[0]; torchFlameSys.col[i*3+1] = _tc[1]; torchFlameSys.col[i*3+2] = _tc[2];
+    torchFlameSys.sz[i] = (0.15 * (1 - 0.5 * f) + 0.035) * (0.6 + 0.4 * ign);
+    torchFlameSys.al[i] = Math.pow(Math.sin(Math.PI * Math.min(1, f * 1.12)), 0.7) * 0.95 * ign;
+  }
+  torchFlameSys.g.attributes.position.needsUpdate = true;
+  torchFlameSys.g.attributes.aColor.needsUpdate = true;
+  torchFlameSys.g.attributes.aSize.needsUpdate = true;
+  torchFlameSys.g.attributes.aAlpha.needsUpdate = true;
 }
 
 updateScales();
@@ -1619,56 +1765,7 @@ for (const y of [1.02, 1.1, 1.18]) {
   torchBands.add(band);
 }
 
-function makeTorchFlameTexture() {
-  const c = document.createElement('canvas');
-  c.width = 128;
-  c.height = 256;
-  const g = c.getContext('2d');
-  const outer = g.createLinearGradient(0, 250, 0, 5);
-  outer.addColorStop(0, 'rgba(255,70,5,0.96)');
-  outer.addColorStop(0.45, 'rgba(255,132,18,0.92)');
-  outer.addColorStop(0.78, 'rgba(255,190,55,0.7)');
-  outer.addColorStop(1, 'rgba(255,220,100,0)');
-  g.fillStyle = outer;
-  g.beginPath();
-  g.moveTo(64, 250);
-  g.bezierCurveTo(20, 224, 24, 164, 50, 118);
-  g.bezierCurveTo(72, 78, 70, 42, 79, 8);
-  g.bezierCurveTo(111, 74, 118, 135, 103, 188);
-  g.bezierCurveTo(95, 222, 82, 242, 64, 250);
-  g.closePath();
-  g.fill();
-  const inner = g.createLinearGradient(0, 232, 0, 82);
-  inner.addColorStop(0, 'rgba(255,255,210,0.98)');
-  inner.addColorStop(0.55, 'rgba(255,226,95,0.92)');
-  inner.addColorStop(1, 'rgba(255,150,24,0)');
-  g.fillStyle = inner;
-  g.beginPath();
-  g.moveTo(64, 230);
-  g.bezierCurveTo(43, 211, 46, 172, 61, 145);
-  g.bezierCurveTo(72, 126, 72, 105, 74, 84);
-  g.bezierCurveTo(94, 132, 91, 185, 78, 215);
-  g.bezierCurveTo(74, 224, 69, 229, 64, 230);
-  g.closePath();
-  g.fill();
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.minFilter = THREE.LinearFilter;
-  tex.magFilter = THREE.LinearFilter;
-  return tex;
-}
-
-const torchFlame = new THREE.Group();
-const torchFlameSprite = new THREE.Sprite(
-  new THREE.SpriteMaterial({
-    map: makeTorchFlameTexture(),
-    transparent: true,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false
-  })
-);
-torchFlameSprite.position.y = 1.48;
-torchFlameSprite.scale.set(0.34, 0.62, 1);
+const torchFlame = new THREE.Group();   // 仅承载柔光晕与点光源；焰体由世界空间粒子(torchFlameSys)绘制
 const torchGlow = new THREE.Sprite(
   new THREE.SpriteMaterial({
     map: radialTexture(64, [
@@ -1684,13 +1781,16 @@ torchGlow.position.y = 1.28;
 torchGlow.scale.set(0.55, 0.48, 1);
 const torchLight = new THREE.PointLight(0xff7928, 0, 6, 2);
 torchLight.position.y = 1.35;
-torchFlame.add(torchFlameSprite, torchGlow, torchLight);
+torchFlame.add(torchGlow, torchLight);
 torch.add(torchWood, torchWrap, torchBands, torchFlame);
 scene.add(torch);
+const _torchHead = new THREE.Vector3();   // 火把头世界坐标（粒子发射点）
 const torchAction = {
-  state: 'unlit', time: 0,
+  state: 'unlit', time: 0, ign: 0,
   stand: new THREE.Vector3(1.58, 0.02, -0.82),
-  ignite: new THREE.Vector3(0.76, 0.09, -0.1)
+  // 引燃位：基座抬到火焰高度、靠火堆近侧边缘，配合倾角让燃烧端从近侧探入火焰核心
+  ignite: new THREE.Vector3(0.96, 0.36, -0.22),
+  tilt: 1.16
 };
 torch.position.copy(torchAction.stand);
 torchFlame.visible = false;
@@ -1700,6 +1800,7 @@ function toggleTorch() {
   const a = torchAction;
   if (a.state === 'lit') {
     a.state = 'unlit';
+    a.ign = 0;                       // 粒子焰停止补充并燃尽
     torchFlame.visible = false;
     torchLight.intensity = 0;
     showActivityMessage('torchOff');
@@ -1718,9 +1819,11 @@ function updateTorch(dt, t) {
   const a = torchAction;
   if (a.state === 'lighting') {
     a.time += dt;
-    const k = THREE.MathUtils.smoothstep(Math.min(1, a.time / 1.15), 0, 1);
+    const k = THREE.MathUtils.smoothstep(Math.min(1, a.time / 1.1), 0, 1);
     torch.position.lerpVectors(a.stand, a.ignite, k);
-    torch.rotation.z = 1.05 * k;
+    torch.rotation.z = a.tilt * k;
+    a.ign = 0;
+    // 燃烧端探入火焰后期开始引燃：火焰在火把仍探在火中时就微微燃起
     if (k >= 1) {
       torchFlame.visible = true;
       a.state = 'returning';
@@ -1728,22 +1831,30 @@ function updateTorch(dt, t) {
     }
   } else if (a.state === 'returning') {
     a.time += dt;
-    const k = THREE.MathUtils.smoothstep(Math.min(1, a.time / 0.85), 0, 1);
+    const k = THREE.MathUtils.smoothstep(Math.min(1, a.time / 0.9), 0, 1);
     torch.position.lerpVectors(a.ignite, a.stand, k);
-    torch.rotation.z = 1.05 * (1 - k);
+    torch.rotation.z = a.tilt * (1 - k);
+    a.ign = k;                                  // 引燃进度：火焰随抽离火堆而逐渐燃旺
     if (k >= 1) {
       a.state = 'lit';
+      a.ign = 1;
       showActivityMessage('torchLit');
     }
   }
+  // 火把头世界坐标（缠布顶沿，粒子焰发射点）；粒子焰每帧推进，熄灭后自然燃尽
+  // 取 1.2 ≈ 缠布顶，让火焰扎根在火把头上而非悬浮其上
+  torch.updateMatrixWorld(true);
+  _torchHead.set(0, 1.2, 0).applyMatrix4(torch.matrixWorld);
+  updateTorchFlame(dt, t, a.ign, _torchHead.x, _torchHead.y, _torchHead.z);
+
   if (torchFlame.visible) {
-    const pulseX = 0.92 + 0.08 * Math.sin(t * 13) + 0.04 * Math.sin(t * 23);
-    const pulseY = 0.96 + 0.08 * Math.sin(t * 11 + 0.7);
-    torchFlameSprite.scale.set(0.34 * pulseX, 0.62 * pulseY, 1);
-    torchFlameSprite.position.x = windVX * 0.22 + Math.sin(t * 7) * 0.012;
-    torchFlameSprite.material.rotation = -windVX * 0.18 + Math.sin(t * 5.5) * 0.025;
-    torchGlow.material.opacity = 0.58 + 0.16 * Math.sin(t * 12);
-    torchLight.intensity = 5.5 * (0.82 + 0.25 * Math.sin(t * 14));
+    const ign = a.ign;
+    // 柔光晕（halo）与点光源随引燃进度联动；焰体本身由粒子绘制
+    torchGlow.position.y = 1.28;
+    const gs = 0.5 * (0.45 + 0.55 * ign);
+    torchGlow.scale.set(gs, gs * 0.9, 1);
+    torchGlow.material.opacity = (0.42 + 0.14 * Math.sin(t * 12)) * ign;
+    torchLight.intensity = 5.5 * (0.82 + 0.25 * Math.sin(t * 14)) * ign;
   }
 }
 
@@ -1870,6 +1981,7 @@ function tidyCampItems() {
 
   torchAction.state = 'unlit';
   torchAction.time = 0;
+  torchAction.ign = 0;
   torch.position.copy(torchAction.stand);
   torch.rotation.set(0, 0, 0);
   torch.visible = false;
