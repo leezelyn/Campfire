@@ -156,6 +156,7 @@
   <button id="kettleBtn">🫖 煮水</button>
   <button id="torchBtn">🔥 点燃火把</button>
   <button id="pineconeBtn">🌰 投掷松果</button>
+  <button id="tidyBtn">🧹 收拾物品</button>
 </div>
 <div id="panel">
   <div id="panelHead"><span id="panelTitle">⚙ 参数调节</span><span id="panelArrow">▾</span></div>
@@ -566,6 +567,7 @@ function makeTree(x, z, s) {
    ============================================================ */
 let lanternGlowMat = null;
 const campLight = new THREE.PointLight(0xffb259, 0, 7, 2);   // 提灯暖光（不投影，点缀补光）
+const campProps = [];
 scene.add(campLight);
 
 function placeProp(group, az, r, faceIn = true) {
@@ -573,6 +575,7 @@ function placeProp(group, az, r, faceIn = true) {
   if (faceIn) group.rotation.y = Math.atan2(-Math.cos(az), -Math.sin(az));   // 正面（+Z）朝火堆
   group.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
   scene.add(group);
+  campProps.push(group);
 }
 
 // 帐篷：三角棱柱（脊形帐），+Z 端开一道暗门朝火
@@ -1189,11 +1192,11 @@ function updateFireflies(dt, t) {
 
 // 飞蛾：被提灯/火光吸引，不匀速盘旋扑飞的淡色身影
 const moths = [];
+const mothFireTarget = new THREE.Vector3(0, 1.0, 0);
 {
   const mothTex = radialTexture(32, [
     [0, 'rgba(222,212,182,0.95)'], [0.5, 'rgba(168,158,128,0.4)'], [1, 'rgba(150,140,110,0)']
   ]);
-  const fireTarget = new THREE.Vector3(0, 1.0, 0);
   for (let i = 0; i < 5; i++) {
     const spr = new THREE.Sprite(new THREE.SpriteMaterial({
       map: mothTex, transparent: true, depthWrite: false, opacity: 0, fog: true
@@ -1201,7 +1204,7 @@ const moths = [];
     spr.scale.set(0.09, 0.06, 1);
     scene.add(spr);
     moths.push({
-      spr, target: i < 3 ? campLight.position : fireTarget,    // 3 只绕提灯、2 只绕火
+      spr, target: i < 3 ? campLight.position : mothFireTarget,    // 3 只绕提灯、2 只绕火
       ang: Math.random() * 6.28, rad: 0.22 + Math.random() * 0.4,
       ph: Math.random() * 6.28, yph: Math.random() * 6.28, seed: Math.random() * 100
     });
@@ -1326,9 +1329,11 @@ const actionButtons = {
   roast: document.getElementById('roastBtn'),
   kettle: document.getElementById('kettleBtn'),
   torch: document.getElementById('torchBtn'),
-  pinecone: document.getElementById('pineconeBtn')
+  pinecone: document.getElementById('pineconeBtn'),
+  tidy: document.getElementById('tidyBtn')
 };
 const UP_AXIS = new THREE.Vector3(0, 1, 0);
+let campTidied = false;
 let activityMessageKey = '';
 let activityMessageUntil = 0;
 let activityUiTimer = 0;
@@ -1411,6 +1416,7 @@ const marshmallowAction = {
 };
 
 function startRoasting() {
+  if (campTidied) return;
   if (marshmallowAction.state !== 'idle') return;
   marshmallowAction.state = 'approach';
   marshmallowAction.time = 0;
@@ -1529,6 +1535,7 @@ const kettleAction = {
 };
 
 function startKettle() {
+  if (campTidied) return;
   if (kettleAction.state !== 'idle') return;
   kettleAction.state = 'placing';
   kettleAction.time = 0;
@@ -1689,6 +1696,7 @@ torch.position.copy(torchAction.stand);
 torchFlame.visible = false;
 
 function toggleTorch() {
+  if (campTidied) return;
   const a = torchAction;
   if (a.state === 'lit') {
     a.state = 'unlit';
@@ -1742,6 +1750,7 @@ function updateTorch(dt, t) {
 // 4) 松果：从镜头侧抛入，落入火堆后短暂燃烧并补充少量燃料
 const pinecones = [];
 function throwPinecone() {
+  if (campTidied) return;
   const group = new THREE.Group();
   const mat = new THREE.MeshStandardMaterial({
     color: 0x3f2512, roughness: 0.95, emissive: 0xff4a0a, emissiveIntensity: 0
@@ -1819,18 +1828,76 @@ function refreshActionButtons() {
   const roastActive = marshmallowAction.state !== 'idle';
   const kettleActive = kettleAction.state !== 'idle';
   const torchBusy = torchAction.state === 'lighting' || torchAction.state === 'returning';
-  actionButtons.roast.disabled = roastActive;
-  actionButtons.kettle.disabled = kettleActive;
-  actionButtons.torch.disabled = torchBusy;
+  actionButtons.roast.disabled = campTidied || roastActive;
+  actionButtons.kettle.disabled = campTidied || kettleActive;
+  actionButtons.torch.disabled = campTidied || torchBusy;
+  actionButtons.pinecone.disabled = campTidied;
+  actionButtons.tidy.disabled = false;
   actionButtons.roast.classList.toggle('active', roastActive);
   actionButtons.kettle.classList.toggle('active', kettleActive);
   actionButtons.torch.classList.toggle('active', torchAction.state === 'lit' || torchBusy);
+  actionButtons.tidy.classList.toggle('active', campTidied);
   actionButtons.roast.textContent = roastActive
     ? tr('roastProgress')(Math.round(marshmallowAction.progress * 100)) : tr('roast');
   actionButtons.kettle.textContent = kettleActive
     ? tr('kettleProgress')(Math.round(kettleAction.progress * 100)) : tr('kettle');
   actionButtons.torch.textContent = torchAction.state === 'lit' ? tr('extinguishTorch') : tr('lightTorch');
   actionButtons.pinecone.textContent = tr('throwPinecone');
+  actionButtons.tidy.textContent = tr(campTidied ? 'placeItems' : 'tidyItems');
+}
+
+function tidyCampItems() {
+  if (campTidied) {
+    placeCampItems();
+    return;
+  }
+  campTidied = true;
+
+  for (const prop of campProps) prop.visible = false;
+  campLight.intensity = 0;
+  if (lanternGlowMat) lanternGlowMat.emissiveIntensity = 0;
+
+  marshmallowAction.state = 'idle';
+  marshmallowAction.time = 0;
+  skewer.visible = false;
+
+  kettleAction.state = 'idle';
+  kettleAction.time = 0;
+  kettle.visible = false;
+  kettleRig.visible = false;
+  kettleMat.emissiveIntensity = 0;
+  for (const puff of steamPuffs) puff.material.opacity = 0;
+
+  torchAction.state = 'unlit';
+  torchAction.time = 0;
+  torch.position.copy(torchAction.stand);
+  torch.rotation.set(0, 0, 0);
+  torch.visible = false;
+  torchFlame.visible = false;
+  torchLight.intensity = 0;
+
+  while (pinecones.length) disposeObject3D(pinecones.pop().group);
+  for (const moth of moths) moth.target = mothFireTarget;
+
+  showActivityMessage('campTidied', 3.5);
+  refreshActionButtons();
+}
+
+function placeCampItems() {
+  if (!campTidied) return;
+  campTidied = false;
+
+  for (const prop of campProps) prop.visible = true;
+  if (lanternGlowMat) lanternGlowMat.emissiveIntensity = 2.4;
+  torch.visible = true;
+  torch.position.copy(torchAction.stand);
+  torch.rotation.set(0, 0, 0);
+  for (let i = 0; i < moths.length; i++) {
+    moths[i].target = i < 3 ? campLight.position : mothFireTarget;
+  }
+
+  showActivityMessage('campPlaced', 3.5);
+  refreshActionButtons();
 }
 
 function updateActivityUi(dt) {
@@ -1871,8 +1938,9 @@ actionButtons.torch.addEventListener('click', toggleTorch);
 actionButtons.pinecone.addEventListener('click', () => {
   throwPinecone();
   actionButtons.pinecone.disabled = true;
-  setTimeout(() => { actionButtons.pinecone.disabled = false; }, 450);
+  setTimeout(() => { if (!campTidied) actionButtons.pinecone.disabled = false; }, 450);
 });
+actionButtons.tidy.addEventListener('click', tidyCampItems);
 
 // 每帧校验视口：窗口隐藏时浏览器报告 0 尺寸且恢复可见不一定触发 resize 事件
 let viewW = -1, viewH = -1;
@@ -2114,6 +2182,8 @@ const I18N = {
     lightTorch: '🔥 点燃火把',
     extinguishTorch: '💨 熄灭火把',
     throwPinecone: '🌰 投掷松果',
+    tidyItems: '🧹 收拾物品',
+    placeItems: '⛺ 摆放物品',
     roastProgress: p => `🍡 烘烤 ${p}%`,
     kettleProgress: p => `🫖 加热 ${p}%`,
     roastStatus: p => `棉花糖烘烤中 ${p}%`,
@@ -2125,6 +2195,8 @@ const I18N = {
     torchOff: '火把已熄灭',
     needFire: '火势太弱，先加一根木柴',
     pineconeThrown: '松果落入火堆，迸出了一阵火星',
+    campTidied: '营地物品已收好，只留下篝火',
+    campPlaced: '帐篷、椅子、背包和提灯已重新摆放',
     panelTitle: '⚙ 参数调节',
     gFlame: '火 焰', gSound: '声 音', gEnv: '环 境',
     fireScale: '火势',
@@ -2169,6 +2241,8 @@ const I18N = {
     lightTorch: '🔥 Light torch',
     extinguishTorch: '💨 Extinguish torch',
     throwPinecone: '🌰 Toss pinecone',
+    tidyItems: '🧹 Pack up',
+    placeItems: '⛺ Set up camp',
     roastProgress: p => `🍡 Roasting ${p}%`,
     kettleProgress: p => `🫖 Heating ${p}%`,
     roastStatus: p => `Marshmallow roasting ${p}%`,
@@ -2180,6 +2254,8 @@ const I18N = {
     torchOff: 'The torch is out',
     needFire: 'The fire is too weak — add a log first',
     pineconeThrown: 'The pinecone lands in the fire with a burst of sparks',
+    campTidied: 'Camp items packed away; only the fire remains',
+    campPlaced: 'The tent, chair, backpack, and lantern are set up again',
     panelTitle: '⚙ Parameters',
     gFlame: 'Flame', gSound: 'Sound', gEnv: 'Environment',
     fireScale: 'Fire intensity',
@@ -2224,6 +2300,8 @@ const I18N = {
     lightTorch: '🔥 松明に火をつける',
     extinguishTorch: '💨 松明を消す',
     throwPinecone: '🌰 松ぼっくりを投げる',
+    tidyItems: '🧹 道具を片付ける',
+    placeItems: '⛺ 道具を設置する',
     roastProgress: p => `🍡 焼き中 ${p}%`,
     kettleProgress: p => `🫖 加熱中 ${p}%`,
     roastStatus: p => `マシュマロを焼いています ${p}%`,
@@ -2235,6 +2313,8 @@ const I18N = {
     torchOff: '松明を消しました',
     needFire: '火が弱すぎます。先に薪をくべてください',
     pineconeThrown: '松ぼっくりが火に入り、火の粉が舞いました',
+    campTidied: 'キャンプ道具を片付け、焚き火だけを残しました',
+    campPlaced: 'テント、椅子、バックパック、ランタンを再設置しました',
     panelTitle: '⚙ パラメータ',
     gFlame: '炎', gSound: '音', gEnv: '環 境',
     fireScale: '火の勢い',
@@ -2394,7 +2474,7 @@ function step(dt, t) {
   if (moonHalo) moonHalo.material.opacity = 1 - 0.6 * cloudNow;
   // 提灯：稳定暖光中带极轻摇曳
   const lanternFlick = 0.9 + 0.07 * Math.sin(t * 6.3) + 0.03 * Math.sin(t * 23.1);
-  campLight.intensity = 4.5 * lanternFlick;
+  campLight.intensity = campTidied ? 0 : 4.5 * lanternFlick;
   if (lanternGlowMat) lanternGlowMat.emissiveIntensity = 2.4 * lanternFlick;
   charMat.emissiveIntensity = (0.35 + 1.35 * fireHealth) * (0.8 + 0.55 * flick);   // 炭随火势冷却变暗
   emberGlow.material.opacity = (0.3 + 0.55 * fireHealth) * (0.6 + 0.5 * flick);
@@ -2552,7 +2632,8 @@ applyLang(lang);
 // 调试钩子：在 rAF 被节流的环境（如隐藏窗口）中手动驱动帧
 window.__campfire = {
   renderer, scene, camera, step, P, applyLang, tossLog,
-  startRoasting, startKettle, toggleTorch, throwPinecone,
+  startRoasting, startKettle, toggleTorch, throwPinecone, tidyCampItems, placeCampItems,
+  isCampTidied: () => campTidied,
   getFuel: () => ({ fuel, fuelTarget, fireHealth, fireDrive, collapseAmt }) };
 
 addEventListener('resize', fitViewport);
