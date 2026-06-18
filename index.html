@@ -18,16 +18,33 @@
   }
   #overlay.hidden { opacity: 0; pointer-events: none; }
   /* 启动遮罩期间隐藏操作 UI（参数面板 / HUD / 加柴按钮），进入后随遮罩淡出再淡入 */
-  #hud, #addLog, #activityBar, #activityStatus, #panel { transition: opacity .9s ease .35s; }
+  #hud, #addLog, #activityBar, #activityStatus, #panel, #ghCorner { transition: opacity .9s ease .35s; }
   #overlay:not(.hidden) ~ #hud,
   #overlay:not(.hidden) ~ #addLog,
   #overlay:not(.hidden) ~ #activityBar,
   #overlay:not(.hidden) ~ #activityStatus,
-  #overlay:not(.hidden) ~ #panel { opacity: 0; pointer-events: none; transition: none; }
+  #overlay:not(.hidden) ~ #panel,
+  #overlay:not(.hidden) ~ #ghCorner { opacity: 0; pointer-events: none; transition: none; }
   #overlay h1 { font-size: 42px; font-weight: 300; letter-spacing: .35em; margin: 0 0 18px; text-indent: .35em; }
   #overlay p  { font-size: 15px; color: #b8a98f; margin: 6px 0; letter-spacing: .1em; }
   #overlay .fire-icon { font-size: 64px; margin-bottom: 24px; animation: breathe 2.4s ease-in-out infinite; }
   @keyframes breathe { 0%,100% { transform: scale(1); opacity:.85 } 50% { transform: scale(1.12); opacity:1 } }
+
+  .gh-link {
+    display: inline-flex; align-items: center; gap: 7px; text-decoration: none;
+    color: #b8a98f; font: 13px/1 "Segoe UI", system-ui, sans-serif; letter-spacing: .05em;
+    transition: color .2s, border-color .2s, background .2s;
+  }
+  .gh-link svg { width: 17px; height: 17px; fill: currentColor; }
+  .gh-link:hover { color: #ffc890; }
+  #ovGithub { margin-top: 26px; color: #7d7260; font-size: 13px; }
+  #ghCorner {
+    position: fixed; right: 16px; bottom: 14px; z-index: 5;
+    padding: 6px 11px; border-radius: 999px; color: rgba(220,205,180,.7);
+    background: rgba(8,12,22,.55); border: 1px solid rgba(255,160,70,.16);
+    backdrop-filter: blur(5px); text-shadow: 0 1px 2px rgba(0,0,0,.8);
+  }
+  #ghCorner:hover { color: #ffc890; border-color: rgba(255,160,70,.4); background: rgba(30,18,8,.7); }
 
   #hud {
     position: fixed; left: 16px; bottom: 14px; z-index: 5;
@@ -142,6 +159,9 @@
   <h1 id="ovTitle">夜 间 篝 火</h1>
   <p id="ovEnter">点击任意处进入（开启声音）</p>
   <p id="ovHint">拖动旋转 · 滚轮缩放 —— 远离篝火，声音按 1/r 衰减</p>
+  <a id="ovGithub" class="gh-link" href="https://github.com/leezelyn" target="_blank" rel="noopener" onclick="event.stopPropagation()">
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 014 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>github.com/leezelyn
+  </a>
 </div>
 <div id="langSwitch">
   <button data-lang="zh" class="active">中</button>
@@ -149,6 +169,9 @@
   <button data-lang="ja">日</button>
 </div>
 <div id="hud"></div>
+<a id="ghCorner" class="gh-link" href="https://github.com/leezelyn" target="_blank" rel="noopener" title="GitHub · leezelyn">
+  <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 014 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>leezelyn
+</a>
 <button id="addLog">🪵 加柴</button>
 <div id="activityStatus" aria-live="polite"></div>
 <div id="activityBar">
@@ -639,13 +662,18 @@ function makeTent() {
   inner.position.set(0, dh * 0.5, D / 2 - 0.28);
   g.add(inner);
 
-  // 掀开的门帘：一片梯形帆布，绕左缘向外翻开
-  const flapShape = new THREE.Shape();
-  flapShape.moveTo(0, 0); flapShape.lineTo(dw * 1.9, 0); flapShape.lineTo(dw * 1.5, dh); flapShape.lineTo(0, dh); flapShape.closePath();
-  const flap = new THREE.Mesh(new THREE.ShapeGeometry(flapShape), fab);
-  flap.position.set(-dw, 0, D / 2 + 0.01);
-  flap.rotation.y = -0.9;                                 // 向外掀开
-  g.add(flap);
+  // 门帘卷起横绑在门洞上沿（露营帐"卷门"开放），两侧系带垂下
+  const rollLen = dw * 1.5;
+  const doorRoll = new THREE.Mesh(new THREE.CapsuleGeometry(0.034, rollLen, 6, 10), fabIn);
+  doorRoll.rotation.z = Math.PI / 2;
+  doorRoll.position.set(0, dh - 0.03, D / 2 + 0.035);
+  doorRoll.scale.set(1, 1, 0.8);
+  g.add(doorRoll);
+  for (const sx of [-rollLen * 0.42, rollLen * 0.42]) {
+    const tie = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.005, 0.11, 5), rope);
+    tie.position.set(sx, dh - 0.085, D / 2 + 0.045);
+    g.add(tie);
+  }
 
   // 拉绳 + 地钉：从两端脊顶斜拉到地面
   function strut(p1, p2, radius, mat) {
@@ -1539,17 +1567,15 @@ const marshmallowMat = new THREE.MeshStandardMaterial({
   color: 0xfff2d8, roughness: 0.88, emissive: 0x3a1203, emissiveIntensity: 0
 });
 const marshmallow = new THREE.Group();
-const marshmallowBody = new THREE.Mesh(
-  new THREE.CylinderGeometry(0.118, 0.118, 0.18, 18),
-  marshmallowMat
-);
-const marshmallowTop = new THREE.Mesh(new THREE.SphereGeometry(0.118, 18, 10), marshmallowMat);
-const marshmallowBottom = marshmallowTop.clone();
-marshmallowTop.scale.y = 0.42;
-marshmallowBottom.scale.y = 0.42;
-marshmallowTop.position.y = 0.09;
-marshmallowBottom.position.y = -0.09;
-marshmallow.add(marshmallowBody, marshmallowTop, marshmallowBottom);
+// 矮胖桶形：平端 + 圆边 + 中段微鼓（车削轮廓）——真实棉花糖，而非药丸状
+// 竹签沿 Y 穿过两端，绕 Y 自转即均匀翻烤
+const mProfile = [
+  [0.000, -0.105], [0.092, -0.105], [0.114, -0.088], [0.118, -0.058],
+  [0.118, -0.030], [0.118,  0.030], [0.118,  0.058], [0.114,  0.088],
+  [0.092,  0.105], [0.000,  0.105]
+].map(p => new THREE.Vector2(p[0], p[1]));
+const marshmallowBody = new THREE.Mesh(new THREE.LatheGeometry(mProfile, 24), marshmallowMat);
+marshmallow.add(marshmallowBody);
 marshmallow.traverse(o => { if (o.isMesh) o.castShadow = true; });
 skewer.add(skewerStick, marshmallow);
 skewer.visible = false;
@@ -1618,34 +1644,54 @@ function updateMarshmallow(dt, t) {
   marshmallow.rotation.y = t * 1.65;
 }
 
-// 2) 水壶：三脚架悬在火焰上方加热，达到沸点后持续冒出水汽
+// 2) 水壶：铸铁壶坐于细金属四脚支架上、架在火焰上方加热，沸腾后壶嘴持续冒汽
 const kettle = new THREE.Group();
 const kettleMat = new THREE.MeshStandardMaterial({
   color: 0x3d4650, metalness: 0.72, roughness: 0.32, emissive: 0x4a1804, emissiveIntensity: 0
 });
-const kettleBody = new THREE.Mesh(new THREE.SphereGeometry(0.27, 20, 14), kettleMat);
-kettleBody.scale.y = 0.82;
-kettleBody.position.y = 0.3;
+// 壶身：车削轮廓（平底 → 鼓腹 → 收肩 → 壶口），坐于支架上
+const bodyProfile = [
+  [0.000, 0.000], [0.150, 0.000], [0.205, 0.035], [0.255, 0.105],
+  [0.276, 0.190], [0.270, 0.270], [0.240, 0.340], [0.198, 0.405],
+  [0.172, 0.445], [0.140, 0.452], [0.000, 0.452]
+].map(p => new THREE.Vector2(p[0], p[1]));
+const kettleBody = new THREE.Mesh(new THREE.LatheGeometry(bodyProfile, 26), kettleMat);
 kettleBody.castShadow = true;
-const kettleLid = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.19, 0.045, 16), kettleMat);
-kettleLid.position.y = 0.53;
-const kettleKnob = new THREE.Mesh(new THREE.SphereGeometry(0.055, 12, 8), kettleMat);
-kettleKnob.scale.y = 0.62;
-kettleKnob.position.y = 0.59;
+// 壶口圈
+const kettleRim = new THREE.Mesh(new THREE.TorusGeometry(0.158, 0.015, 8, 24), kettleMat);
+kettleRim.rotation.x = Math.PI / 2; kettleRim.position.y = 0.452;
+// 盖：低圆顶 + 顶钮
+const kettleLid = new THREE.Mesh(
+  new THREE.SphereGeometry(0.155, 22, 10, 0, Math.PI * 2, 0, Math.PI * 0.5), kettleMat);
+kettleLid.scale.y = 0.58; kettleLid.position.y = 0.452;
+const kettleKnob = new THREE.Mesh(new THREE.SphereGeometry(0.03, 12, 8), kettleMat);
+kettleKnob.position.y = 0.452 + 0.155 * 0.58 + 0.012;
+// 嘴：上扬锥管 + 外翻唇
 const kettleSpout = new THREE.Group();
-const kettleSpoutTube = new THREE.Mesh(new THREE.CylinderGeometry(0.048, 0.09, 0.36, 12), kettleMat);
-kettleSpoutTube.position.y = 0.18;
-const kettleSpoutLip = new THREE.Mesh(new THREE.CylinderGeometry(0.078, 0.057, 0.065, 12), kettleMat);
-kettleSpoutLip.position.y = 0.39;
+const kettleSpoutTube = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.085, 0.34, 12), kettleMat);
+kettleSpoutTube.position.y = 0.15;
+const kettleSpoutLip = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.038, 0.06, 12), kettleMat);
+kettleSpoutLip.position.y = 0.33; kettleSpoutLip.rotation.z = 0.28;
 kettleSpout.add(kettleSpoutTube, kettleSpoutLip);
-kettleSpout.position.set(0.21, 0.35, 0);
-kettleSpout.rotation.z = -1.17;
-const kettleHandle = new THREE.Mesh(
-  new THREE.TorusGeometry(0.31, 0.025, 8, 20, Math.PI),
-  new THREE.MeshStandardMaterial({ color: 0x21160f, roughness: 0.95 })
-);
-kettleHandle.position.y = 0.38;
-kettle.add(kettleBody, kettleLid, kettleKnob, kettleSpout, kettleHandle);
+kettleSpout.position.set(0.2, 0.18, 0);
+kettleSpout.rotation.z = -0.92;
+// 提梁把手（bail）：竖直半环 + 横握把 + 两枚铆耳；与壶嘴垂直、拱过壶盖上方
+const bailMat = new THREE.MeshStandardMaterial({ color: 0x1b1e22, metalness: 0.5, roughness: 0.55 });
+const kettleBail = new THREE.Group();
+const bailArc = new THREE.Mesh(new THREE.TorusGeometry(0.205, 0.015, 7, 26, Math.PI), bailMat);
+bailArc.position.y = 0.36;
+const bailGrip = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.022, 0.022, 0.12, 8),
+  new THREE.MeshStandardMaterial({ color: 0x141008, roughness: 0.95 }));
+bailGrip.position.set(0, 0.565, 0); bailGrip.rotation.z = Math.PI / 2;
+kettleBail.add(bailArc, bailGrip);
+for (const sx of [-1, 1]) {
+  const lug = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.04, 8), kettleMat);
+  lug.position.set(sx * 0.205, 0.36, 0); lug.rotation.z = Math.PI / 2;
+  kettleBail.add(lug);
+}
+kettleBail.rotation.y = Math.PI / 2;
+kettle.add(kettleBody, kettleRim, kettleLid, kettleKnob, kettleSpout, kettleBail);
 const steamPuffs = [];
 for (let i = 0; i < 7; i++) {
   const puff = new THREE.Mesh(
@@ -1657,22 +1703,21 @@ for (let i = 0; i < 7; i++) {
 }
 kettle.visible = false;
 scene.add(kettle);
-const KETTLE_REST = new THREE.Vector3(0.04, 0.56, 0.02);
+const KETTLE_REST = new THREE.Vector3(0.04, 0.55, 0.02);   // 壶坐落在支架顶圈
 const kettleRig = new THREE.Group();
-const rigWoodMat = new THREE.MeshStandardMaterial({ color: 0x2c1a0d, roughness: 0.98 });
-const rigRopeMat = new THREE.MeshStandardMaterial({ color: 0x705033, roughness: 1 });
-const rigApex = new THREE.Vector3(0.04, 2.02, 0.02);
-for (const angle of [0.35, 2.45, 4.55]) {
-  const foot = new THREE.Vector3(Math.cos(angle) * 1.18, 0.03, Math.sin(angle) * 1.18);
-  kettleRig.add(makeBeamBetween(foot, rigApex, 0.035, rigWoodMat, 7));
+const standMat = new THREE.MeshStandardMaterial({ color: 0x17191d, metalness: 0.5, roughness: 0.55 });
+const standCx = 0.04, standCz = 0.02, ringY = 0.575, ringR = 0.19;
+// 顶圈：托住壶底
+const topRing = new THREE.Mesh(new THREE.TorusGeometry(ringR, 0.013, 8, 30), standMat);
+topRing.rotation.x = Math.PI / 2; topRing.position.set(standCx, ringY, standCz);
+topRing.castShadow = true;
+kettleRig.add(topRing);
+// 4 条外撇细腿：顶圈 → 地面（落在石圈内侧）
+for (const ang of [Math.PI * 0.25, Math.PI * 0.75, Math.PI * 1.25, Math.PI * 1.75]) {
+  const top = new THREE.Vector3(standCx + Math.cos(ang) * ringR, ringY, standCz + Math.sin(ang) * ringR);
+  const foot = new THREE.Vector3(standCx + Math.cos(ang) * 0.8, 0.02, standCz + Math.sin(ang) * 0.8);
+  kettleRig.add(makeBeamBetween(top, foot, 0.015, standMat, 6));
 }
-const lash = new THREE.Mesh(new THREE.TorusGeometry(0.09, 0.018, 6, 16), rigRopeMat);
-lash.rotation.x = Math.PI / 2;
-lash.position.copy(rigApex).add(new THREE.Vector3(0, -0.06, 0));
-kettleRig.add(lash);
-const chainTop = rigApex.clone().add(new THREE.Vector3(0, -0.08, 0));
-const chainBottom = KETTLE_REST.clone().add(new THREE.Vector3(0, 0.71, 0));
-kettleRig.add(makeBeamBetween(chainTop, chainBottom, 0.012, rigRopeMat, 6));
 kettleRig.visible = false;
 scene.add(kettleRig);
 const kettleAction = {
@@ -1697,9 +1742,9 @@ function updateSteam(t, strength) {
     const puff = steamPuffs[i];
     const phase = (t * (0.34 + i * 0.015) + i / steamPuffs.length) % 1;
     puff.position.set(
-      0.08 + Math.sin(t * 1.5 + i * 2.1) * 0.07 * phase,
-      0.58 + phase * 0.85,
-      Math.cos(t * 1.2 + i) * 0.045 * phase
+      0.46 + Math.sin(t * 1.5 + i * 2.1) * 0.06 * phase,
+      0.42 + phase * 0.82,
+      Math.cos(t * 1.2 + i) * 0.05 * phase
     );
     puff.scale.setScalar(0.55 + phase * 1.8);
     puff.material.opacity = Math.sin(Math.PI * phase) * 0.24 * strength;
