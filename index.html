@@ -161,6 +161,42 @@
   }
   #bdayCardBody::after { content: '▌'; opacity: .55; animation: bdayCaret 1s step-end infinite; }
   @keyframes bdayCaret { 50% { opacity: 0; } }
+
+  /* 🎂 入口提示 + 页面内编辑器 */
+  #ovBday { font-size: 13px; color: #ffb3d4; margin-top: 16px; letter-spacing: .05em; }
+  #ovBday b { color: #ffe08a; letter-spacing: .18em; }
+  #ovBdayEdit { color: #9fd0ff; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+  #ovBdayEdit:hover { color: #d2eaff; }
+  #bdayGear {
+    position: fixed; right: 14px; bottom: 16px; z-index: 13; width: 40px; height: 40px;
+    border-radius: 50%; border: 1px solid rgba(255,150,200,.4); background: rgba(40,18,32,.82);
+    color: #fff; font-size: 19px; cursor: pointer; backdrop-filter: blur(6px);
+  }
+  #bdayGear:hover { background: rgba(72,30,54,.92); }
+  #bdayEditor {
+    position: fixed; inset: 0; z-index: 20; display: none;
+    align-items: center; justify-content: center; background: rgba(6,4,10,.55);
+  }
+  #bdayEditor.open { display: flex; }
+  #bdayEditor .be-card {
+    width: min(90vw, 380px); max-height: 86vh; overflow-y: auto; box-sizing: border-box;
+    background: linear-gradient(160deg, rgba(40,20,34,.97), rgba(20,12,20,.98));
+    border: 1px solid rgba(255,150,200,.4); border-radius: 16px; padding: 20px 22px;
+    color: #ffe9f3; font: 14px/1.5 "Segoe UI", system-ui, sans-serif;
+    box-shadow: 0 14px 60px rgba(255,90,160,.3);
+  }
+  #bdayEditor h3 { margin: 0 0 12px; font-weight: 600; text-align: center; }
+  #bdayEditor label { display: block; margin: 12px 0 0; font-size: 12px; color: #f3c6da; }
+  #bdayEditor input, #bdayEditor select, #bdayEditor textarea {
+    width: 100%; box-sizing: border-box; margin-top: 5px; padding: 8px 10px;
+    background: rgba(0,0,0,.3); border: 1px solid rgba(255,150,200,.3); border-radius: 8px;
+    color: #fff; font: 14px "Segoe UI", system-ui, sans-serif; resize: vertical;
+  }
+  #bdayEditor .be-row { display: flex; gap: 10px; margin-top: 16px; }
+  #bdayEditor .be-row button { flex: 1; padding: 10px; border-radius: 999px; cursor: pointer; border: none; font: 600 14px "Segoe UI", system-ui, sans-serif; }
+  #beApply { background: linear-gradient(90deg,#ff7eb3,#ff5fa2); color: #fff; }
+  #beClose { background: rgba(255,255,255,.12); color: #ffd9ea; }
+  #bdayEditor .be-tip { font-size: 11px; color: #c79bb0; margin: 12px 0 0; line-height: 1.6; }
 </style>
 <script type="importmap">
 {
@@ -178,6 +214,7 @@
   <h1 id="ovTitle">夜 间 篝 火</h1>
   <p id="ovEnter">点击任意处进入（开启声音）</p>
   <p id="ovHint">拖动旋转 · 滚轮缩放 —— 远离篝火，声音按 1/r 衰减</p>
+  <p id="ovBday">🎂 输入 <b>0622</b> 解锁生日惊喜 · <span id="ovBdayEdit">✏️ 自定义祝福</span></p>
   <a id="ovGithub" class="gh-link" href="https://github.com/leezelyn" target="_blank" rel="noopener" onclick="event.stopPropagation()">
     <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 014 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>github.com/leezelyn
   </a>
@@ -189,6 +226,23 @@
 </div>
 <div id="hud"></div>
 <div id="bdayCard"><div id="bdayCardHead">💌</div><div id="bdayCardBody"></div></div>
+<button id="bdayGear" title="生日惊喜设置">🎂</button>
+<div id="bdayEditor"><div class="be-card">
+  <h3>🎂 生日惊喜 · 设置</h3>
+  <label>名字（萤火虫拼字）<input id="beName" type="text" maxlength="16"></label>
+  <label>祝福语（名字上方一行）<input id="beGreet" type="text" maxlength="24"></label>
+  <label>💌 祝福卡（每行一句）<textarea id="beCard" rows="4"></textarea></label>
+  <label>主题<select id="beTheme">
+    <option value="rainbow">🌈 彩虹流光</option>
+    <option value="0xff5fa2">🌸 暖粉</option>
+    <option value="0x8a6bff">💜 蓝紫</option>
+    <option value="0xffd34d">🌟 暖金</option>
+    <option value="0x46e6c8">🌊 青碧</option>
+  </select></label>
+  <label>口令<input id="beCode" type="text" maxlength="12"></label>
+  <div class="be-row"><button id="beApply">保存并预览 🎉</button><button id="beClose">关闭</button></div>
+  <p class="be-tip">设置存在本地浏览器，刷新不丢。进入场景后输入口令即可触发。</p>
+</div></div>
 <a id="ghCorner" class="gh-link" href="https://github.com/leezelyn" target="_blank" rel="noopener" title="GitHub · leezelyn">
   <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 014 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>leezelyn
 </a>
@@ -2724,19 +2778,26 @@ function step(dt, t) {
    ============================================================ */
 const BIRTHDAY = {
   code:  '0622',                 // 入口口令
-  name:  'NAME',                 // 萤火虫拼出的名字（占位：改成寿星名字，英文点阵更清晰）
+  name:  'NAME',                 // 萤火虫拼出的名字（用页面右下角「🎂」编辑，无需改代码）
   greet: 'Happy Birthday',       // 萤火虫拼出的祝福语
-  theme: 0xff5fa2,               // 主题色（暖粉）；想换色改这里，如 0x8a6bff 蓝紫
-  card: [                        // 💌 祝福卡逐字浮现（每行一句，可增删）
+  theme: 'rainbow',              // 主题：'rainbow' 彩虹流光 / 也可填十六进制如 0xff5fa2
+  card: [
     'To NAME',
     '愿你被温柔与光照亮，',
     '所愿皆成，所行皆暖。',
     '生日快乐 🎂',
   ],
 };
+// 从本地存储载入页面里编辑过的内容（不改代码即可自定义）
+try { Object.assign(BIRTHDAY, JSON.parse(localStorage.getItem('campfireBday') || '{}')); } catch {}
 
-let birthday = false, bdayTextReveal = 0;
-const _bdayColor = new THREE.Color(BIRTHDAY.theme);
+let birthday = false, bdayTextReveal = 0, bdayRainbow = false;
+const _bdayColor = new THREE.Color(0xffffff), _bdayTmp = new THREE.Color();
+function applyBdayTheme() {
+  bdayRainbow = (String(BIRTHDAY.theme) === 'rainbow');
+  _bdayColor.set(bdayRainbow ? 0xffffff : (Number(BIRTHDAY.theme) || 0xff5fa2));
+}
+applyBdayTheme();
 
 // —— 流星雨：天区高处随机划下的发光线段（头亮尾暗）——
 const meteors = [];
@@ -2777,9 +2838,11 @@ function updateMeteors(dt, t) {
   }
 }
 
-// —— 萤火虫拼字："Happy Birthday" + 名字，浮在夜空 ——
-let bdayTextSys = null; const bdayTextPts = [];
-{
+// —— 萤火虫拼字："Happy Birthday" + 名字，浮在夜空（位置放低，不必仰头）——
+let bdayTextSys = null; let bdayTextPts = [];
+function buildBirthdayText() {
+  if (bdayTextSys) { scene.remove(bdayTextSys.points); bdayTextSys.g.dispose(); bdayTextSys.mat.dispose(); }
+  bdayTextPts = [];
   const cv = document.createElement('canvas'); cv.width = 512; cv.height = 240;
   const cg = cv.getContext('2d');
   cg.fillStyle = '#000'; cg.fillRect(0, 0, 512, 240);
@@ -2792,19 +2855,21 @@ let bdayTextSys = null; const bdayTextPts = [];
   for (let i = raw.length - 1; i > 0; i--) { const j = Math.random() * (i + 1) | 0; const tmp = raw[i]; raw[i] = raw[j]; raw[j] = tmp; }
   const pts = raw.slice(0, 360);
   bdayTextSys = makeParticleSystem(Math.max(1, pts.length), '0.25', THREE.AdditiveBlending);
-  bdayTextSys.points.visible = false; bdayTextSys.points.frustumCulled = false;
-  const center = new THREE.Vector3(-4.5, 8.5, -7.5);
+  bdayTextSys.points.visible = birthday; bdayTextSys.points.frustumCulled = false;
+  const center = new THREE.Vector3(-3, 4.1, -6);            // 降低高度，落在视线前方而非头顶
   const toCam = camera.position.clone().sub(center).normalize();
   const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), toCam).normalize();
   const up = new THREE.Vector3().crossVectors(toCam, right).normalize();
-  const S = 0.03;
+  const S = 0.022;
   for (let i = 0; i < pts.length; i++) {
     const [px, py] = pts[i];
     const target = center.clone().addScaledVector(right, (px - 256) * S).addScaledVector(up, -(py - 120) * S);
-    const home = center.clone().add(new THREE.Vector3((Math.random() - 0.5) * 34, (Math.random() - 0.5) * 18, (Math.random() - 0.5) * 22));
-    bdayTextPts.push({ home, target, ph: Math.random() * 6.28, delay: Math.random() * 0.45 });
+    const home = center.clone().add(new THREE.Vector3((Math.random() - 0.5) * 26, (Math.random() - 0.5) * 12, (Math.random() - 0.5) * 16));
+    bdayTextPts.push({ home, target, ph: Math.random() * 6.28, delay: Math.random() * 0.45, hueOff: px / 512 });
   }
+  bdayTextReveal = 0;
 }
+buildBirthdayText();
 function updateBirthdayText(dt, t) {
   if (!bdayTextSys) return;
   bdayTextSys.mat.uniforms.uScale.value = fireflySys.mat.uniforms.uScale.value;
@@ -2816,9 +2881,11 @@ function updateBirthdayText(dt, t) {
     bdayTextSys.pos[i * 3 + 1] = p.home.y + (p.target.y - p.home.y) * k;
     bdayTextSys.pos[i * 3 + 2] = p.home.z + (p.target.z - p.home.z) * k;
     const tw = 0.65 + 0.35 * Math.sin(t * 3 + p.ph);
-    bdayTextSys.col[i * 3] = _bdayColor.r * 0.6 + 0.4;
-    bdayTextSys.col[i * 3 + 1] = _bdayColor.g * 0.6 + 0.32;
-    bdayTextSys.col[i * 3 + 2] = _bdayColor.b * 0.6 + 0.2;
+    if (bdayRainbow) _bdayTmp.setHSL((t * 0.08 + p.hueOff) % 1, 0.85, 0.62);   // 彩虹横向流动
+    else _bdayTmp.setRGB(_bdayColor.r * 0.6 + 0.4, _bdayColor.g * 0.6 + 0.32, _bdayColor.b * 0.6 + 0.2);
+    bdayTextSys.col[i * 3] = _bdayTmp.r;
+    bdayTextSys.col[i * 3 + 1] = _bdayTmp.g;
+    bdayTextSys.col[i * 3 + 2] = _bdayTmp.b;
     bdayTextSys.sz[i] = 0.07 + 0.03 * k;
     bdayTextSys.al[i] = k * (0.6 + 0.4 * tw);
   }
@@ -2873,11 +2940,13 @@ function playBirthdaySong() {
 function activateBirthday() {
   if (birthday) return;
   birthday = true;
-  campLight.color.copy(_bdayColor);                       // 提灯主题色
   campLight.intensity = Math.max(campLight.intensity, 5);
-  if (lanternGlowMat) {
-    lanternGlowMat.emissive.copy(_bdayColor);
-    lanternGlowMat.color.copy(_bdayColor).lerp(new THREE.Color(0xffffff), 0.55);
+  if (!bdayRainbow) {                                      // 固定色一次设好；彩虹色由每帧更新
+    campLight.color.copy(_bdayColor);
+    if (lanternGlowMat) {
+      lanternGlowMat.emissive.copy(_bdayColor);
+      lanternGlowMat.color.copy(_bdayColor).lerp(new THREE.Color(0xffffff), 0.55);
+    }
   }
   if (bdayTextSys) { bdayTextSys.points.visible = true; updateBirthdayText(0, 0); }  // 先就位，避免原点闪一帧
   showBirthdayCard();
@@ -2887,6 +2956,11 @@ function updateBirthday(dt, t) {
   if (!birthday) return;
   updateMeteors(dt, t);
   updateBirthdayText(dt, t);
+  if (bdayRainbow) {                                       // 提灯：彩虹流光
+    const lh = (t * 0.08) % 1;
+    campLight.color.setHSL(lh, 0.82, 0.6);
+    if (lanternGlowMat) { lanternGlowMat.emissive.setHSL(lh, 0.82, 0.55); lanternGlowMat.color.setHSL(lh, 0.5, 0.82); }
+  }
   const hue = (t * 0.18) % 1;                              // 棉花糖：生日限定彩虹款（覆盖烘烤上色）
   marshmallowMat.color.setHSL(hue, 0.6, 0.62);
   marshmallowMat.emissive.setHSL(hue, 0.55, 0.5);
@@ -2905,6 +2979,41 @@ addEventListener('keydown', (e) => {
     }
   }
 });
+
+// —— 🎂 页面内编辑器（无需改代码，存本地浏览器）——
+{
+  const ed = document.getElementById('bdayEditor');
+  const $ = id => document.getElementById(id);
+  const open = () => {
+    $('beName').value = BIRTHDAY.name; $('beGreet').value = BIRTHDAY.greet;
+    $('beCard').value = BIRTHDAY.card.join('\n'); $('beTheme').value = String(BIRTHDAY.theme);
+    $('beCode').value = BIRTHDAY.code; ed.classList.add('open');
+  };
+  const close = () => ed.classList.remove('open');
+  $('beClose').addEventListener('click', close);
+  ed.addEventListener('click', e => { if (e.target === ed) close(); });
+  $('beApply').addEventListener('click', () => {
+    BIRTHDAY.name  = $('beName').value.trim() || 'NAME';
+    BIRTHDAY.greet = $('beGreet').value.trim() || 'Happy Birthday';
+    BIRTHDAY.card  = $('beCard').value.split('\n');
+    BIRTHDAY.theme = $('beTheme').value;
+    BIRTHDAY.code  = ($('beCode').value || '0622').trim();
+    try { localStorage.setItem('campfireBday', JSON.stringify(BIRTHDAY)); } catch {}
+    applyBdayTheme(); buildBirthdayText(); close();
+    const ov = document.getElementById('overlay');
+    if (ov && !ov.classList.contains('hidden')) ov.click();        // 进入并预览
+    if (!birthday) activateBirthday();
+    else {
+      showBirthdayCard();
+      if (!bdayRainbow) {
+        campLight.color.copy(_bdayColor);
+        if (lanternGlowMat) { lanternGlowMat.emissive.copy(_bdayColor); lanternGlowMat.color.copy(_bdayColor).lerp(new THREE.Color(0xffffff), 0.55); }
+      }
+    }
+  });
+  const link = $('ovBdayEdit'); if (link) link.addEventListener('click', e => { e.stopPropagation(); open(); });
+  const gear = $('bdayGear'); if (gear) gear.addEventListener('click', open);
+}
 
 animate();
 
