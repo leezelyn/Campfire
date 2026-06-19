@@ -129,13 +129,14 @@
 
   #activityBar {
     position: fixed; left: 50%; bottom: 70px; transform: translateX(-50%);
-    z-index: 6; display: flex; gap: 8px;
+    z-index: 6; display: flex; flex-wrap: wrap; justify-content: center; gap: 8px;
+    max-width: 96vw;
     padding: 7px; border-radius: 14px;
     background: rgba(8,12,22,.72); border: 1px solid rgba(255,160,70,.16);
     backdrop-filter: blur(8px);
   }
   #activityBar button {
-    min-width: 106px; padding: 9px 12px; border-radius: 9px;
+    min-width: 106px; padding: 9px 13px; border-radius: 9px; white-space: nowrap;
     background: rgba(30,18,8,.78); color: #e7d5bc;
     border: 1px solid rgba(255,160,70,.28);
     font: 13px/1 var(--camp-ui-font);
@@ -418,28 +419,60 @@ const P = {
 /* ============================================================
    环境：地面、星空、月亮、树木、石头
    ============================================================ */
-// 地面：程序化砂土碎石纹理
-function makeGroundTexture() {
-  const c = document.createElement('canvas');
-  c.width = c.height = 256;
-  const g = c.getContext('2d');
-  g.fillStyle = '#1f160d';
-  g.fillRect(0, 0, 256, 256);
-  for (let i = 0; i < 2600; i++) {
-    const l = Math.random();
-    g.fillStyle = `rgba(${34 + l * 52 | 0},${24 + l * 38 | 0},${15 + l * 24 | 0},${0.3 + Math.random() * 0.45})`;
-    const s = 1 + Math.random() * 2;
-    g.fillRect(Math.random() * 256, Math.random() * 256, s, s);
+// 地面：多尺度程序化砂土 + 凹凸贴图——火光斜照下有微浮雕与碎石，不再像平面贴图
+function makeGroundTextures() {
+  const S = 512;
+  const col = document.createElement('canvas'); col.width = col.height = S;
+  const bmp = document.createElement('canvas'); bmp.width = bmp.height = S;
+  const gc = col.getContext('2d'), gb = bmp.getContext('2d');
+  const rng = mulberry32(99);
+  gc.fillStyle = '#241a10'; gc.fillRect(0, 0, S, S);
+  gb.fillStyle = '#7a7a7a'; gb.fillRect(0, 0, S, S);                 // 中灰 = 凹凸基准（平）
+  // 大尺度土斑（柔和明暗块）——打破平铺感
+  gc.filter = 'blur(26px)';
+  for (let i = 0; i < 24; i++) {
+    const l = rng();
+    gc.fillStyle = `rgba(${28 + l * 44 | 0},${20 + l * 32 | 0},${12 + l * 22 | 0},0.5)`;
+    gc.beginPath(); gc.ellipse(rng() * S, rng() * S, 40 + rng() * 90, 30 + rng() * 70, rng() * 3, 0, 7); gc.fill();
   }
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(24, 24);
-  return tex;
+  gc.filter = 'none';
+  // 中/细尺度颗粒（颜色与凹凸逐点对齐）
+  for (let i = 0; i < 6000; i++) {
+    const x = rng() * S, y = rng() * S, l = rng(), s = 1 + rng() * 2.4;
+    gc.fillStyle = `rgba(${36 + l * 62 | 0},${26 + l * 46 | 0},${16 + l * 30 | 0},${0.32 + rng() * 0.46})`;
+    gc.fillRect(x, y, s, s);
+    const bl = (95 + l * 120) | 0;
+    gb.fillStyle = `rgba(${bl},${bl},${bl},${0.22 + rng() * 0.4})`;
+    gb.fillRect(x, y, s, s);
+  }
+  // 散落小石子：色面带接地暗影 + 受光亮缘，凹凸上为凸起
+  for (let i = 0; i < 150; i++) {
+    const x = rng() * S, y = rng() * S, r = 2 + rng() * rng() * 7;
+    gc.fillStyle = 'rgba(0,0,0,0.32)';
+    gc.beginPath(); gc.ellipse(x + r * 0.35, y + r * 0.45, r * 1.05, r * 0.8, 0, 0, 7); gc.fill();
+    gc.fillStyle = `rgba(${66 + rng() * 44 | 0},${56 + rng() * 36 | 0},${44 + rng() * 30 | 0},0.85)`;
+    gc.beginPath(); gc.arc(x, y, r, 0, 7); gc.fill();
+    gc.fillStyle = `rgba(${120 + rng() * 60 | 0},${110 + rng() * 50 | 0},${96 + rng() * 40 | 0},0.4)`;
+    gc.beginPath(); gc.arc(x - r * 0.25, y - r * 0.28, r * 0.6, 0, 7); gc.fill();
+    gb.fillStyle = 'rgba(205,205,205,0.9)';
+    gb.beginPath(); gb.arc(x, y, r, 0, 7); gb.fill();
+  }
+  const aniso = renderer.capabilities.getMaxAnisotropy();
+  const mk = (cv, srgb) => {
+    const t = new THREE.CanvasTexture(cv);
+    if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+    t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(12, 12); t.anisotropy = aniso;
+    return t;
+  };
+  return { map: mk(col, true), bumpMap: mk(bmp, false) };
 }
+const groundTex = makeGroundTextures();
 const ground = new THREE.Mesh(
-  new THREE.CircleGeometry(60, 64),
-  new THREE.MeshStandardMaterial({ map: makeGroundTexture(), roughness: 1.0, metalness: 0.0 })
+  new THREE.CircleGeometry(60, 96),
+  new THREE.MeshStandardMaterial({
+    map: groundTex.map, bumpMap: groundTex.bumpMap, bumpScale: 0.05,
+    roughness: 0.97, metalness: 0.0
+  })
 );
 ground.rotation.x = -Math.PI / 2;
 ground.receiveShadow = true;
@@ -671,21 +704,24 @@ function setMoonPhase(deg) {
     .addScaledVector(moonTLit, Math.sin(ph)).normalize();
 }
 
-// 远山剪影
+// 远山剪影：宽缓的圆顶轮廓（压扁椭球，叠出柔和山脊，不再是尖锥）
 {
   const rng = mulberry32(44);
   const mat = new THREE.MeshBasicMaterial({ color: 0x0c1424 });
   const moonAz = Math.atan2(moonDir.z, moonDir.x);
-  for (let i = 0; i < 14; i++) {
-    const a = Math.PI * 1.25 + (rng() - 0.5) * 2.6;
-    let h = 12 + rng() * 22;
+  for (let i = 0; i < 20; i++) {
+    const a = Math.PI * 1.25 + (rng() - 0.5) * 2.8;
+    let vh = 20 + rng() * 26;                          // 峰高 20-46
     // 月亮方位附近压低山体，避免挡月
     const da = Math.abs(Math.atan2(Math.sin(a - moonAz), Math.cos(a - moonAz)));
-    if (da < 0.45) h = Math.min(h, 9);
-    const m = new THREE.Mesh(new THREE.ConeGeometry(26 + rng() * 30, h, 5), mat);
-    const d = 62 + rng() * 30;
-    m.position.set(Math.cos(a) * d, h / 2 - 0.5, Math.sin(a) * d);
+    if (da < 0.45) vh = Math.min(vh, 17);
+    const w = vh * (0.4 + rng() * 0.32);              // 宽 = 高的 40-72% → 恒比高窄（成峰，不成圆丘），又不过尖
+    const m = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 12), mat);
+    const d = 60 + rng() * 32;
+    m.scale.set(w, vh, w * (0.55 + rng() * 0.3));     // 窄高圆顶，深浅略变
+    m.position.set(Math.cos(a) * d, -vh * 0.2, Math.sin(a) * d);   // 略下沉，底融地平
     m.rotation.y = rng() * Math.PI;
+    m.rotation.z = (rng() - 0.5) * 0.55;              // 都倾斜成脊、不对称更自然
     scene.add(m);
   }
 }
@@ -2994,11 +3030,11 @@ function buildBirthdayText() {
   const drawTrackedLine = (text, y, maxWidth, maxSize, minSize, weight) => {
     const chars = [...String(text || '')];
     const isLatin = chars.every(ch => ch.charCodeAt(0) < 256);
-    const fontStack = '"Segoe UI", system-ui, "Microsoft YaHei", "PingFang SC", sans-serif';   // 萤火虫描字换回清晰无衬线，点阵更易辨
+    const fontFamily = CAMP_UI_FONT_BY_LANG[lang] || CAMP_UI_FONT_BY_LANG.zh;
     let size = maxSize;
     let tracking = isLatin ? Math.max(1.5, size * 0.035) : Math.max(3, size * 0.07);
     const setFont = () => {
-      cg.font = `${weight} ${size}px ${fontStack}`;
+      cg.font = `${weight} ${size}px "${fontFamily}"`;
       tracking = isLatin ? Math.max(1.5, size * 0.035) : Math.max(3, size * 0.07);
     };
     setFont();
