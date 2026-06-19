@@ -5,14 +5,47 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>夜间篝火 · Three.js</title>
 <style>
+  @font-face {
+    font-family: "CampJapanese";
+    src: url("assets/fonts/Chisuga_Shotai0.2.7.ttf") format("truetype");
+    font-display: swap;
+  }
+  @font-face {
+    font-family: "CampEnglish";
+    src: url("assets/fonts/PlaywriteUSTrad-Regular.ttf") format("truetype");
+    font-display: swap;
+  }
+  @font-face {
+    font-family: "CampJapaneseLetter";
+    src: url("assets/fonts/ゆずの木楷書.ttf") format("truetype");
+    font-display: swap;
+  }
+  @font-face {
+    font-family: "CampChinese";
+    src: url("assets/fonts/方正楷体 简体中文.ttf") format("truetype");
+    font-display: swap;
+  }
+  :root {
+    --camp-ui-font: "CampChinese", "Microsoft YaHei UI", sans-serif;
+    --camp-letter-font: "CampChinese", "Microsoft YaHei UI", sans-serif;
+  }
+  html[lang="en"] {
+    --camp-ui-font: "CampEnglish", "Segoe UI", sans-serif;
+    --camp-letter-font: "CampEnglish", "Segoe UI", sans-serif;
+  }
+  html[lang="ja"] {
+    --camp-ui-font: "CampJapanese", "Yu Gothic UI", sans-serif;
+    --camp-letter-font: "CampJapaneseLetter", "Yu Mincho", serif;
+  }
   html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #05080f; }
+  body { font-family: var(--camp-ui-font); }
   #app { width: 100%; height: 100%; }
 
   #overlay {
     position: fixed; inset: 0; z-index: 10;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     background: radial-gradient(ellipse at center, rgba(10,14,26,.92), rgba(3,5,10,.98));
-    color: #f3e9d8; font-family: "Segoe UI", system-ui, sans-serif;
+    color: #f3e9d8; font-family: var(--camp-ui-font);
     cursor: pointer; user-select: none;
     transition: opacity 1.2s ease;
   }
@@ -32,7 +65,7 @@
 
   .gh-link {
     display: inline-flex; align-items: center; gap: 7px; text-decoration: none;
-    color: #b8a98f; font: 13px/1 "Segoe UI", system-ui, sans-serif; letter-spacing: .05em;
+    color: #b8a98f; font: 13px/1 var(--camp-ui-font); letter-spacing: .05em;
     transition: color .2s, border-color .2s, background .2s;
   }
   .gh-link svg { width: 17px; height: 17px; fill: currentColor; }
@@ -48,7 +81,7 @@
 
   #hud {
     position: fixed; left: 16px; bottom: 14px; z-index: 5;
-    color: rgba(235,220,195,.75); font: 12px/1.7 "Segoe UI", system-ui, sans-serif;
+    color: rgba(235,220,195,.75); font: 12px/1.7 var(--camp-ui-font);
     text-shadow: 0 1px 3px rgba(0,0,0,.9); pointer-events: none; letter-spacing: .04em;
     white-space: pre-line;
   }
@@ -57,7 +90,7 @@
     position: fixed; top: 14px; right: 14px; z-index: 6; width: 244px;
     background: rgba(8,12,22,.84); border: 1px solid rgba(255,160,70,.18);
     border-radius: 10px; backdrop-filter: blur(6px);
-    font: 12px/1.4 "Segoe UI", system-ui, sans-serif; color: #e8dcc8;
+    font: 12px/1.4 var(--camp-ui-font); color: #e8dcc8;
     user-select: none;
   }
   #panelHead {
@@ -86,7 +119,7 @@
     z-index: 6; padding: 11px 28px; border-radius: 999px;
     background: rgba(30,18,8,.85); color: #ffc890;
     border: 1px solid rgba(255,160,70,.4);
-    font: 15px/1 "Segoe UI", system-ui, sans-serif; letter-spacing: .15em;
+    font: 15px/1 var(--camp-ui-font); letter-spacing: .15em;
     cursor: pointer; backdrop-filter: blur(6px);
     transition: background .15s, box-shadow .15s, opacity .15s;
   }
@@ -105,7 +138,7 @@
     min-width: 106px; padding: 9px 12px; border-radius: 9px;
     background: rgba(30,18,8,.78); color: #e7d5bc;
     border: 1px solid rgba(255,160,70,.28);
-    font: 13px/1 "Segoe UI", system-ui, sans-serif;
+    font: 13px/1 var(--camp-ui-font);
     cursor: pointer; transition: color .15s, background .15s, box-shadow .15s, opacity .15s;
   }
   #activityBar button:hover {
@@ -120,7 +153,7 @@
   #activityStatus {
     position: fixed; left: 50%; bottom: 126px; transform: translateX(-50%);
     z-index: 6; min-height: 18px; max-width: 720px;
-    color: #ffd19a; font: 12px/1.4 "Segoe UI", system-ui, sans-serif;
+    color: #ffd19a; font: 12px/1.4 var(--camp-ui-font);
     text-align: center; text-shadow: 0 1px 4px #000;
     pointer-events: none; letter-spacing: .04em;
   }
@@ -133,7 +166,7 @@
     padding: 6px 11px; border-radius: 999px;
     background: rgba(8,12,22,.84); color: #cfc2ab;
     border: 1px solid rgba(255,160,70,.25);
-    font: 12px/1 "Segoe UI", system-ui, sans-serif; letter-spacing: .05em;
+    font: 12px/1 var(--camp-ui-font); letter-spacing: .05em;
     cursor: pointer; backdrop-filter: blur(6px);
     transition: color .15s, background .15s, border-color .15s;
   }
@@ -146,33 +179,90 @@
   /* 🎂 生日祝福卡（逐字浮现） */
   #bdayCard {
     position: fixed; left: 50%; top: 50%; transform: translate(-50%, -45%) scale(.92);
-    z-index: 14; width: min(82vw, 380px); padding: 22px 26px 26px;
-    background: linear-gradient(160deg, rgba(44,18,32,.95), rgba(22,12,20,.97));
-    border: 1px solid rgba(255,150,200,.42); border-radius: 16px;
-    box-shadow: 0 12px 50px rgba(255,90,160,.28), inset 0 0 42px rgba(255,120,180,.08);
-    color: #ffe9f3; font-family: "Segoe UI", system-ui, sans-serif;
+    z-index: 14; width: min(86vw, 620px); min-height: 390px;
+    padding: 38px 52px 42px; box-sizing: border-box;
+    background: linear-gradient(160deg, rgba(46,32,18,.96), rgba(20,15,10,.98));
+    border: 1px solid rgba(235,184,92,.45); border-radius: 22px;
+    box-shadow: 0 12px 50px rgba(140,84,22,.24), inset 0 0 42px rgba(235,174,72,.07);
+    color: #f5ead7; font-family: var(--camp-ui-font);
     opacity: 0; pointer-events: none; transition: opacity .9s ease, transform .9s ease;
   }
-  #bdayCard.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
-  #bdayCardHead { font-size: 34px; text-align: center; margin-bottom: 10px; }
+  #bdayCard.show { opacity: 1; pointer-events: auto; transform: translate(-50%, -50%) scale(1); }
+  #bdayCard.accepted {
+    transform: translate(-50%, -50%) scale(1.025);
+    border-color: rgba(246,205,126,.78);
+    box-shadow: 0 12px 58px rgba(170,108,30,.3), inset 0 0 48px rgba(246,196,100,.12);
+  }
+  #bdayCardHead { font-size: 48px; line-height: 1; text-align: center; margin-bottom: 22px; }
   #bdayCardBody {
-    white-space: pre-wrap; line-height: 1.95; font-size: 16px; letter-spacing: .03em;
-    min-height: 6.5em; text-align: center;
+    white-space: pre-wrap; line-height: 2; font-size: 32px; letter-spacing: .06em;
+    min-height: 8em; text-align: center; font-family: var(--camp-letter-font);
   }
   #bdayCardBody::after { content: '▌'; opacity: .55; animation: bdayCaret 1s step-end infinite; }
+  #bdayCard.complete #bdayCardBody::after { display: none; }
+  #bdayCardActions {
+    display: flex; justify-content: center; gap: 16px; margin-top: 28px;
+  }
+  #bdayCardActions button {
+    min-width: 174px; min-height: 52px; padding: 12px 22px; border-radius: 999px;
+    border: 1px solid rgba(235,190,110,.32); cursor: pointer;
+    font: 18px/1.25 var(--camp-ui-font);
+    transition: background .2s ease, border-color .2s ease, transform .2s ease;
+  }
+  #bdayCardActions button:hover { transform: translateY(-1px); }
+  #bdayAccept {
+    color: #2a1b0b; background: linear-gradient(90deg, rgba(223,164,65,.94), rgba(242,195,105,.96));
+    box-shadow: 0 4px 18px rgba(205,137,36,.18);
+  }
+  #bdayRepeat { color: #e8d7bc; background: rgba(255,255,255,.05); }
+  @media (max-width: 680px) {
+    #bdayCard {
+      width: min(92vw, 540px); min-height: 340px;
+      padding: 30px 24px 32px;
+    }
+    #bdayCardHead { font-size: 42px; margin-bottom: 18px; }
+    #bdayCardBody { font-size: clamp(18px, 4.6vw, 21px); line-height: 1.85; min-height: 7.5em; }
+    #bdayCardActions { gap: 10px; margin-top: 22px; }
+    #bdayCardActions button {
+      min-width: 0; flex: 1; min-height: 48px; padding: 10px 12px;
+      font-size: clamp(14px, 3.6vw, 17px);
+    }
+  }
+  #bdayRepeat:hover { border-color: rgba(242,202,130,.55); background: rgba(255,255,255,.09); }
   @keyframes bdayCaret { 50% { opacity: 0; } }
 
-  /* 🎂 入口提示 + 页面内编辑器 */
-  #ovBday { font-size: 13px; color: #ffb3d4; margin-top: 16px; letter-spacing: .05em; }
-  #ovBday b { color: #ffe08a; letter-spacing: .18em; }
-  #ovBdayEdit { color: #9fd0ff; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
-  #ovBdayEdit:hover { color: #d2eaff; }
+  /* 隐蔽的四位彩蛋入口 + 页面内编辑器 */
+  #bdayUnlock {
+    width: max-content; margin: 16px auto 0; opacity: .42;
+    display: flex; align-items: center; justify-content: center; gap: 12px;
+    transition: opacity .25s ease;
+  }
+  #bdayUnlock:focus-within { opacity: .86; }
+  #bdayUnlockHint {
+    display: block; color: rgba(225,232,244,.74);
+    text-align: right; font: 14px/1.2 var(--camp-ui-font);
+    letter-spacing: .08em; white-space: nowrap;
+  }
+  #bdayUnlockInput {
+    width: 120px; height: 44px; display: block; box-sizing: border-box; margin: 0; padding: 7px 11px;
+    border: 1px solid rgba(210,220,240,.2); border-radius: 6px;
+    outline: 0; background: rgba(10,15,25,.25); color: rgba(232,237,247,.82);
+    text-align: center; font: 18px/1.2 ui-monospace, "Cascadia Mono", monospace;
+    letter-spacing: .25em; caret-color: rgba(225,232,245,.6);
+  }
+  #bdayUnlockInput:focus { border-color: rgba(225,190,125,.48); background: rgba(18,20,24,.42); }
+  #bdayUnlockInput::placeholder { color: rgba(220,228,242,.52); }
+  #bdayUnlock.wrong { animation: unlockWrong .28s ease; }
+  @keyframes unlockWrong {
+    25%, 75% { transform: translateX(-3px); }
+    50% { transform: translateX(3px); }
+  }
   #bdayGear {
     position: fixed; right: 14px; bottom: 16px; z-index: 13; width: 40px; height: 40px;
-    border-radius: 50%; border: 1px solid rgba(255,150,200,.4); background: rgba(40,18,32,.82);
+    border-radius: 50%; border: 1px solid rgba(235,184,92,.42); background: rgba(42,29,15,.84);
     color: #fff; font-size: 19px; cursor: pointer; backdrop-filter: blur(6px);
   }
-  #bdayGear:hover { background: rgba(72,30,54,.92); }
+  #bdayGear:hover { background: rgba(78,50,20,.94); }
   #bdayEditor {
     position: fixed; inset: 0; z-index: 20; display: none;
     align-items: center; justify-content: center; background: rgba(6,4,10,.55);
@@ -180,23 +270,23 @@
   #bdayEditor.open { display: flex; }
   #bdayEditor .be-card {
     width: min(90vw, 380px); max-height: 86vh; overflow-y: auto; box-sizing: border-box;
-    background: linear-gradient(160deg, rgba(40,20,34,.97), rgba(20,12,20,.98));
-    border: 1px solid rgba(255,150,200,.4); border-radius: 16px; padding: 20px 22px;
-    color: #ffe9f3; font: 14px/1.5 "Segoe UI", system-ui, sans-serif;
-    box-shadow: 0 14px 60px rgba(255,90,160,.3);
+    background: linear-gradient(160deg, rgba(44,31,18,.97), rgba(20,15,10,.98));
+    border: 1px solid rgba(235,184,92,.42); border-radius: 16px; padding: 20px 22px;
+    color: #f5ead7; font: 14px/1.5 var(--camp-ui-font);
+    box-shadow: 0 14px 60px rgba(140,84,22,.28);
   }
   #bdayEditor h3 { margin: 0 0 12px; font-weight: 600; text-align: center; }
-  #bdayEditor label { display: block; margin: 12px 0 0; font-size: 12px; color: #f3c6da; }
+  #bdayEditor label { display: block; margin: 12px 0 0; font-size: 12px; color: #e8cfaa; }
   #bdayEditor input, #bdayEditor select, #bdayEditor textarea {
     width: 100%; box-sizing: border-box; margin-top: 5px; padding: 8px 10px;
-    background: rgba(0,0,0,.3); border: 1px solid rgba(255,150,200,.3); border-radius: 8px;
-    color: #fff; font: 14px "Segoe UI", system-ui, sans-serif; resize: vertical;
+    background: rgba(0,0,0,.3); border: 1px solid rgba(235,184,92,.3); border-radius: 8px;
+    color: #fff; font: 14px var(--camp-ui-font); resize: vertical;
   }
   #bdayEditor .be-row { display: flex; gap: 10px; margin-top: 16px; }
-  #bdayEditor .be-row button { flex: 1; padding: 10px; border-radius: 999px; cursor: pointer; border: none; font: 600 14px "Segoe UI", system-ui, sans-serif; }
-  #beApply { background: linear-gradient(90deg,#ff7eb3,#ff5fa2); color: #fff; }
-  #beClose { background: rgba(255,255,255,.12); color: #ffd9ea; }
-  #bdayEditor .be-tip { font-size: 11px; color: #c79bb0; margin: 12px 0 0; line-height: 1.6; }
+  #bdayEditor .be-row button { flex: 1; padding: 10px; border-radius: 999px; cursor: pointer; border: none; font: 600 14px var(--camp-ui-font); }
+  #beApply { background: linear-gradient(90deg,#dca141,#efc46f); color: #281a09; }
+  #beClose { background: rgba(255,255,255,.1); color: #ead8bc; }
+  #bdayEditor .be-tip { font-size: 11px; color: #bda27c; margin: 12px 0 0; line-height: 1.6; }
 </style>
 <script type="importmap">
 {
@@ -214,7 +304,11 @@
   <h1 id="ovTitle">夜 间 篝 火</h1>
   <p id="ovEnter">点击任意处进入（开启声音）</p>
   <p id="ovHint">拖动旋转 · 滚轮缩放 —— 远离篝火，声音按 1/r 衰减</p>
-  <p id="ovBday">🎂 输入 <b>0622</b> 解锁生日惊喜 · <span id="ovBdayEdit">✏️ 自定义祝福</span></p>
+  <form id="bdayUnlock" autocomplete="off">
+    <label id="bdayUnlockHint" for="bdayUnlockInput">月日 · MMDD</label>
+    <input id="bdayUnlockInput" type="password" inputmode="numeric" maxlength="4"
+      pattern="[0-9]{4}" placeholder="····">
+  </form>
   <a id="ovGithub" class="gh-link" href="https://github.com/leezelyn" target="_blank" rel="noopener" onclick="event.stopPropagation()">
     <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 014 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>github.com/leezelyn
   </a>
@@ -225,13 +319,20 @@
   <button data-lang="ja">日</button>
 </div>
 <div id="hud"></div>
-<div id="bdayCard"><div id="bdayCardHead">💌</div><div id="bdayCardBody"></div></div>
-<button id="bdayGear" title="生日惊喜设置">🎂</button>
+<div id="bdayCard">
+  <div id="bdayCardHead">🎁</div>
+  <div id="bdayCardBody"></div>
+  <div id="bdayCardActions">
+    <button id="bdayAccept" type="button">✓ 收下祝福</button>
+    <button id="bdayRepeat" type="button">↻ 再读一遍</button>
+  </div>
+</div>
+<button id="bdayGear" title="生日惊喜设置" hidden>🎂</button>
 <div id="bdayEditor"><div class="be-card">
   <h3>🎂 生日惊喜 · 设置</h3>
   <label>名字（萤火虫拼字）<input id="beName" type="text" maxlength="16"></label>
   <label>祝福语（名字上方一行）<input id="beGreet" type="text" maxlength="24"></label>
-  <label>💌 祝福卡（每行一句）<textarea id="beCard" rows="4"></textarea></label>
+  <label>祝福卡（每行一句）<textarea id="beCard" rows="4"></textarea></label>
   <label>主题<select id="beTheme">
     <option value="rainbow">🌈 彩虹流光</option>
     <option value="0xff5fa2">🌸 暖粉</option>
@@ -239,9 +340,9 @@
     <option value="0xffd34d">🌟 暖金</option>
     <option value="0x46e6c8">🌊 青碧</option>
   </select></label>
-  <label>口令<input id="beCode" type="text" maxlength="12"></label>
+  <label>生日月日（4 位口令）<input id="beCode" type="text" inputmode="numeric" maxlength="4" placeholder="例如 0622"></label>
   <div class="be-row"><button id="beApply">保存并预览 🎉</button><button id="beClose">关闭</button></div>
-  <p class="be-tip">设置存在本地浏览器，刷新不丢。进入场景后输入口令即可触发。</p>
+  <p class="be-tip">按 MMDD 设置生日月日，例如 6 月 22 日填写 0622。刷新后输入该日期，才会显示设置入口并触发惊喜。</p>
 </div></div>
 <a id="ghCorner" class="gh-link" href="https://github.com/leezelyn" target="_blank" rel="noopener" title="GitHub · leezelyn">
   <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 014 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>leezelyn
@@ -2406,6 +2507,10 @@ const I18N = {
     ovTitle: '夜 间 篝 火',
     ovEnter: '点击任意处进入（开启声音）',
     ovHint: '拖动旋转 · 滚轮缩放 —— 远离篝火，声音按 1/r 衰减',
+    unlockHint: '月日 · MMDD',
+    acceptBlessing: '✓ 收下祝福',
+    repeatBlessing: '↻ 再读一遍',
+    blessingAccepted: '这份祝福已经被好好收下',
     addLog: '🪵 加柴',
     lowFire: '🪵 火势渐弱——点「加柴」续燃',
     roast: '🍡 烤棉花糖',
@@ -2465,6 +2570,10 @@ const I18N = {
     ovTitle: 'Night Campfire',
     ovEnter: 'Click anywhere to enter (sound on)',
     ovHint: 'Drag to orbit · scroll to zoom — sound fades as 1/r from the fire',
+    unlockHint: 'Date · MMDD',
+    acceptBlessing: '✓ Accept blessing',
+    repeatBlessing: '↻ Read again',
+    blessingAccepted: 'The blessing has been warmly received',
     addLog: '🪵 Add log',
     lowFire: '🪵 The fire is dying — click “Add log” to keep it going',
     roast: '🍡 Roast marshmallow',
@@ -2524,6 +2633,10 @@ const I18N = {
     ovTitle: '夜 の 焚 き 火',
     ovEnter: '画面をクリックして開始（音が出ます）',
     ovHint: 'ドラッグで回転 · ホイールでズーム —— 焚き火から離れると音は 1/r で減衰',
+    unlockHint: '月日 · MMDD',
+    acceptBlessing: '✓ 祝福を受け取る',
+    repeatBlessing: '↻ もう一度読む',
+    blessingAccepted: '祝福を大切に受け取りました',
     addLog: '🪵 薪をくべる',
     lowFire: '🪵 火が弱まっています——「薪をくべる」で継続',
     roast: '🍡 マシュマロを焼く',
@@ -2594,6 +2707,21 @@ function detectLang() {
   return 'en';   // 不在支持列表内时回落英文
 }
 let lang = detectLang();
+const CAMP_UI_FONT_BY_LANG = {
+  zh: 'CampChinese',
+  en: 'CampEnglish',
+  ja: 'CampJapanese'
+};
+const CAMP_LETTER_FONT_BY_LANG = {
+  zh: 'CampChinese',
+  en: 'CampEnglish',
+  ja: 'CampJapaneseLetter'
+};
+function loadCampFonts(l) {
+  if (!document.fonts) return Promise.resolve();
+  const families = new Set([CAMP_UI_FONT_BY_LANG[l], CAMP_LETTER_FONT_BY_LANG[l]]);
+  return Promise.all([...families].map(family => document.fonts.load(`16px "${family}"`)));
+}
 // 注意：命名为 tr 而非 t，避免与主循环 step(dt, t) 的时间参数 t 冲突
 function tr(key) { return I18N[lang][key] ?? I18N.zh[key] ?? key; }
 
@@ -2604,6 +2732,9 @@ function bindTip(el, key)  { boundTips.push({ el, key });  el.title = tr(key); }
 bindText(document.getElementById('ovTitle'), 'ovTitle');
 bindText(document.getElementById('ovEnter'), 'ovEnter');
 bindText(document.getElementById('ovHint'), 'ovHint');
+bindText(document.getElementById('bdayUnlockHint'), 'unlockHint');
+bindText(document.getElementById('bdayAccept'), 'acceptBlessing');
+bindText(document.getElementById('bdayRepeat'), 'repeatBlessing');
 bindText(document.getElementById('addLog'), 'addLog');
 bindText(document.getElementById('panelTitle'), 'panelTitle');
 
@@ -2617,6 +2748,9 @@ function applyLang(l) {
   for (const btn of langBtns) btn.classList.toggle('active', btn.dataset.lang === l);
   refreshActionButtons();
   hudTimer = 1;   // 让 HUD 在下一帧立即用新语言重绘
+  loadCampFonts(l).then(() => {
+    if (lang === l) buildBirthdayText();
+  }).catch(() => {});
 }
 for (const btn of langBtns) btn.addEventListener('click', () => applyLang(btn.dataset.lang));
 
@@ -2773,11 +2907,11 @@ function step(dt, t) {
 
 /* ============================================================
    🎂 生日彩蛋：输入口令 0622 触发生日主题
-   流星雨 · 提灯/棉花糖换色 · 萤火虫拼字 · 💌 祝福卡 · 生日歌
+   流星雨 · 提灯/棉花糖换色 · 萤火虫拼字 · 祝福卡 · 生日歌
    —— 个性化内容在 BIRTHDAY 配置里编辑（占位可改）——
    ============================================================ */
 const BIRTHDAY = {
-  code:  '0622',                 // 入口口令
+  code:  '0622',                 // 生日月日口令，格式 MMDD
   name:  'NAME',                 // 萤火虫拼出的名字（用页面右下角「🎂」编辑，无需改代码）
   greet: 'Happy Birthday',       // 萤火虫拼出的祝福语
   theme: 'rainbow',              // 主题：'rainbow' 彩虹流光 / 也可填十六进制如 0xff5fa2
@@ -2790,8 +2924,17 @@ const BIRTHDAY = {
 };
 // 从本地存储载入页面里编辑过的内容（不改代码即可自定义）
 try { Object.assign(BIRTHDAY, JSON.parse(localStorage.getItem('campfireBday') || '{}')); } catch {}
+function normalizeBirthdayCode(value) {
+  const code = String(value || '').replace(/\D/g, '').slice(0, 4);
+  if (!/^\d{4}$/.test(code)) return null;
+  const month = Number(code.slice(0, 2)), day = Number(code.slice(2, 4));
+  const maxDay = new Date(2000, month, 0).getDate();
+  return month >= 1 && month <= 12 && day >= 1 && day <= maxDay ? code : null;
+}
+BIRTHDAY.code = normalizeBirthdayCode(BIRTHDAY.code) || '0622';
 
-let birthday = false, bdayTextReveal = 0, bdayRainbow = false;
+let birthday = false, bdayTextReveal = 0, bdayRainbow = false, bdayTextActive = false;
+let birthdaySettingsUnlocked = false;
 const _bdayColor = new THREE.Color(0xffffff), _bdayTmp = new THREE.Color();
 function applyBdayTheme() {
   bdayRainbow = (String(BIRTHDAY.theme) === 'rainbow');
@@ -2843,35 +2986,72 @@ let bdayTextSys = null; let bdayTextPts = [];
 function buildBirthdayText() {
   if (bdayTextSys) { scene.remove(bdayTextSys.points); bdayTextSys.g.dispose(); bdayTextSys.mat.dispose(); }
   bdayTextPts = [];
-  const cv = document.createElement('canvas'); cv.width = 512; cv.height = 240;
+  const cv = document.createElement('canvas'); cv.width = 768; cv.height = 320;
   const cg = cv.getContext('2d');
-  cg.fillStyle = '#000'; cg.fillRect(0, 0, 512, 240);
-  cg.fillStyle = '#fff'; cg.textAlign = 'center'; cg.textBaseline = 'middle';
-  cg.font = '600 56px "Segoe UI", system-ui, sans-serif'; cg.fillText(BIRTHDAY.greet, 256, 76);
-  cg.font = '700 96px "Segoe UI", system-ui, sans-serif'; cg.fillText(BIRTHDAY.name, 256, 168);
-  const img = cg.getImageData(0, 0, 512, 240).data, raw = [];
-  for (let y = 0; y < 240; y += 4) for (let x = 0; x < 512; x += 4)
-    if (img[(y * 512 + x) * 4] > 130) raw.push([x, y]);
-  for (let i = raw.length - 1; i > 0; i--) { const j = Math.random() * (i + 1) | 0; const tmp = raw[i]; raw[i] = raw[j]; raw[j] = tmp; }
-  const pts = raw.slice(0, 360);
-  bdayTextSys = makeParticleSystem(Math.max(1, pts.length), '0.25', THREE.AdditiveBlending);
-  bdayTextSys.points.visible = birthday; bdayTextSys.points.frustumCulled = false;
-  const center = new THREE.Vector3(-3, 4.1, -6);            // 降低高度，落在视线前方而非头顶
+  cg.fillStyle = '#000'; cg.fillRect(0, 0, cv.width, cv.height);
+  cg.fillStyle = '#fff'; cg.textBaseline = 'middle';
+
+  const drawTrackedLine = (text, y, maxWidth, maxSize, minSize, weight) => {
+    const chars = [...String(text || '')];
+    const isLatin = chars.every(ch => ch.charCodeAt(0) < 256);
+    const fontFamily = CAMP_UI_FONT_BY_LANG[lang] || CAMP_UI_FONT_BY_LANG.zh;
+    let size = maxSize;
+    let tracking = isLatin ? Math.max(1.5, size * 0.035) : Math.max(3, size * 0.07);
+    const setFont = () => {
+      cg.font = `${weight} ${size}px "${fontFamily}"`;
+      tracking = isLatin ? Math.max(1.5, size * 0.035) : Math.max(3, size * 0.07);
+    };
+    setFont();
+    const measure = () => chars.reduce((sum, ch) => sum + cg.measureText(ch).width, 0)
+      + Math.max(0, chars.length - 1) * tracking;
+    while (size > minSize && measure() > maxWidth) { size -= 2; setFont(); }
+    let x = (cv.width - measure()) * 0.5;
+    for (const ch of chars) {
+      cg.fillText(ch, x, y);
+      x += cg.measureText(ch).width + tracking;
+    }
+  };
+
+  drawTrackedLine(BIRTHDAY.greet, 92, 680, 68, 42, 650);
+  drawTrackedLine(BIRTHDAY.name, 224, 620, 108, 60, 750);
+
+  const img = cg.getImageData(0, 0, cv.width, cv.height).data;
+  const pts = [];
+  const SAMPLE_STEP = 5;
+  for (let y = 0; y < cv.height; y += SAMPLE_STEP) {
+    for (let x = 0; x < cv.width; x += SAMPLE_STEP) {
+      if (img[(y * cv.width + x) * 4] > 150) pts.push([x, y]);
+    }
+  }
+
+  bdayTextSys = makeParticleSystem(Math.max(1, pts.length), '0.16', THREE.AdditiveBlending);
+  bdayTextSys.points.visible = false; bdayTextSys.points.frustumCulled = false;   // 等"接受信件"后由 startBirthdayText 显示
+  const center = new THREE.Vector3(-3, 4.0, -6);            // 降低高度，落在视线前方而非头顶
   const toCam = camera.position.clone().sub(center).normalize();
   const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), toCam).normalize();
   const up = new THREE.Vector3().crossVectors(toCam, right).normalize();
-  const S = 0.022;
+  const S = 0.0145;
   for (let i = 0; i < pts.length; i++) {
     const [px, py] = pts[i];
-    const target = center.clone().addScaledVector(right, (px - 256) * S).addScaledVector(up, -(py - 120) * S);
-    const home = center.clone().add(new THREE.Vector3((Math.random() - 0.5) * 26, (Math.random() - 0.5) * 12, (Math.random() - 0.5) * 16));
-    bdayTextPts.push({ home, target, ph: Math.random() * 6.28, delay: Math.random() * 0.45, hueOff: px / 512 });
+    const target = center.clone()
+      .addScaledVector(right, (px - cv.width * 0.5) * S)
+      .addScaledVector(up, -(py - cv.height * 0.5) * S);
+    const ha = Math.random() * Math.PI * 2, hr = 16 + Math.random() * 18;          // 起点散布四方，随后飞入聚字
+    const home = new THREE.Vector3(center.x + Math.cos(ha) * hr, Math.max(0.4, center.y + (Math.random() - 0.35) * 18), center.z + Math.sin(ha) * hr);
+    bdayTextPts.push({
+      home, target,
+      ph: Math.random() * Math.PI * 2,
+      blinkSpeed: 1.15 + Math.random() * 2.1,
+      breatheSpeed: 0.35 + Math.random() * 0.55,
+      delay: Math.random() * 0.35,
+      hueOff: px / cv.width
+    });
   }
-  bdayTextReveal = 0;
+  bdayTextReveal = 0; bdayTextActive = false;
 }
 buildBirthdayText();
 function updateBirthdayText(dt, t) {
-  if (!bdayTextSys) return;
+  if (!bdayTextSys || !bdayTextActive) return;
   bdayTextSys.mat.uniforms.uScale.value = fireflySys.mat.uniforms.uScale.value;
   bdayTextReveal = Math.min(1, bdayTextReveal + dt * 0.3);
   for (let i = 0; i < bdayTextPts.length; i++) {
@@ -2880,32 +3060,73 @@ function updateBirthdayText(dt, t) {
     bdayTextSys.pos[i * 3] = p.home.x + (p.target.x - p.home.x) * k;
     bdayTextSys.pos[i * 3 + 1] = p.home.y + (p.target.y - p.home.y) * k;
     bdayTextSys.pos[i * 3 + 2] = p.home.z + (p.target.z - p.home.z) * k;
-    const tw = 0.65 + 0.35 * Math.sin(t * 3 + p.ph);
-    if (bdayRainbow) _bdayTmp.setHSL((t * 0.08 + p.hueOff) % 1, 0.85, 0.62);   // 彩虹横向流动
+    const pulse = 0.5 + 0.5 * Math.sin(t * p.blinkSpeed + p.ph);
+    const flash = Math.pow(pulse, 5);                         // 短促亮起，模拟萤火虫发光脉冲
+    const breathe = 0.5 + 0.5 * Math.sin(t * p.breatheSpeed + p.ph * 1.7);
+    const glow = 0.18 + 0.22 * breathe + 0.78 * flash;       // 保留微光，避免字形完全消失
+    if (bdayRainbow) _bdayTmp.setHSL((t * 0.045 + p.hueOff * 0.72) % 1, 0.68, 0.68);   // 柔和彩虹横向流动
     else _bdayTmp.setRGB(_bdayColor.r * 0.6 + 0.4, _bdayColor.g * 0.6 + 0.32, _bdayColor.b * 0.6 + 0.2);
     bdayTextSys.col[i * 3] = _bdayTmp.r;
     bdayTextSys.col[i * 3 + 1] = _bdayTmp.g;
     bdayTextSys.col[i * 3 + 2] = _bdayTmp.b;
-    bdayTextSys.sz[i] = 0.07 + 0.03 * k;
-    bdayTextSys.al[i] = k * (0.6 + 0.4 * tw);
+    bdayTextSys.sz[i] = (0.035 + 0.022 * glow) * (0.78 + 0.22 * k);
+    bdayTextSys.al[i] = (0.35 + 0.65 * k) * Math.min(1, 0.12 + 0.92 * glow);   // 飞行途中也可见，落位后更亮
   }
   bdayTextSys.g.attributes.position.needsUpdate = true;
   bdayTextSys.g.attributes.aColor.needsUpdate = true;
   bdayTextSys.g.attributes.aSize.needsUpdate = true;
   bdayTextSys.g.attributes.aAlpha.needsUpdate = true;
 }
+// 萤火虫从四方飞入、聚成文字（"接受信件"后触发）
+function startBirthdayText() {
+  if (!bdayTextSys) return;
+  bdayTextActive = true; bdayTextReveal = 0;
+  bdayTextSys.points.visible = true;
+  updateBirthdayText(0, 0);   // 先就位到四方起点，再逐帧飞入
+}
 
-// —— 💌 祝福卡逐字显示 ——
+// —— 祝福卡逐字显示 + 接受/重读 ——
+let birthdayCardRun = 0;
 function showBirthdayCard() {
-  const card = document.getElementById('bdayCard'), body = document.getElementById('bdayCardBody');
-  if (!card || !body) return;
-  body.textContent = ''; card.classList.add('show');
+  const card = document.getElementById('bdayCard');
+  const head = document.getElementById('bdayCardHead');
+  const body = document.getElementById('bdayCardBody');
+  if (!card || !head || !body) return;
+  const run = ++birthdayCardRun;
+  head.textContent = '🎁';
+  body.textContent = '';
+  card.classList.remove('accepted', 'complete');
+  card.classList.add('show');
   const full = BIRTHDAY.card.join('\n'); let i = 0;
   const tick = () => {
+    if (run !== birthdayCardRun || !card.classList.contains('show')) return;
     body.textContent = full.slice(0, i);
-    if (i < full.length) { const ch = full[i]; i++; setTimeout(tick, ch === '\n' ? 320 : 70); }
+    if (i < full.length) {
+      const ch = full[i]; i++;
+      setTimeout(tick, ch === '\n' ? 320 : 70);
+    } else {
+      card.classList.add('complete');
+    }
   };
   setTimeout(tick, 700);
+}
+
+{
+  const card = document.getElementById('bdayCard');
+  const head = document.getElementById('bdayCardHead');
+  document.getElementById('bdayAccept').addEventListener('click', e => {
+    e.stopPropagation();
+    birthdayCardRun++;
+    card.classList.add('accepted', 'complete');
+    head.textContent = '✨';
+    showActivityMessage('blessingAccepted', 3.5);
+    setTimeout(() => card.classList.remove('show', 'accepted'), 620);
+    setTimeout(startBirthdayText, 700);                 // 接受信件后，萤火虫从四方飞来组字
+  });
+  document.getElementById('bdayRepeat').addEventListener('click', e => {
+    e.stopPropagation();
+    showBirthdayCard();
+  });
 }
 
 // —— 🎵 生日歌（程序合成《Happy Birthday》旋律，经主增益）——
@@ -2939,6 +3160,7 @@ function playBirthdaySong() {
 // —— 触发 + 每帧更新 ——
 function activateBirthday() {
   if (birthday) return;
+  if (!campTidied) tidyCampItems();
   birthday = true;
   campLight.intensity = Math.max(campLight.intensity, 5);
   if (!bdayRainbow) {                                      // 固定色一次设好；彩虹色由每帧更新
@@ -2948,7 +3170,8 @@ function activateBirthday() {
       lanternGlowMat.color.copy(_bdayColor).lerp(new THREE.Color(0xffffff), 0.55);
     }
   }
-  if (bdayTextSys) { bdayTextSys.points.visible = true; updateBirthdayText(0, 0); }  // 先就位，避免原点闪一帧
+  bdayTextActive = false;
+  if (bdayTextSys) bdayTextSys.points.visible = false;   // 萤火虫文字等"接受信件"后再从四方飞来
   showBirthdayCard();
   playBirthdaySong();
 }
@@ -2967,24 +3190,55 @@ function updateBirthday(dt, t) {
   marshmallowMat.emissiveIntensity = Math.max(marshmallowMat.emissiveIntensity, 0.14);
 }
 
-// 口令监听：任意处依次输入 0622 → 进入并切换生日主题
-let _bdayBuf = '';
-addEventListener('keydown', (e) => {
-  if (e.key && e.key.length === 1 && e.key >= '0' && e.key <= '9') {
-    _bdayBuf = (_bdayBuf + e.key).slice(-BIRTHDAY.code.length);
-    if (_bdayBuf === BIRTHDAY.code) {
-      const ov = document.getElementById('overlay');
-      if (ov && !ov.classList.contains('hidden')) ov.click();   // 进入 + 开声
-      activateBirthday();
+function unlockBirthdaySettings() {
+  birthdaySettingsUnlocked = true;
+  const gear = document.getElementById('bdayGear');
+  if (gear) gear.hidden = false;
+}
+
+// 隐蔽入口：输入已设置的四位 MMDD，正确后才显示设置按钮并触发主题
+{
+  const form = document.getElementById('bdayUnlock');
+  const input = document.getElementById('bdayUnlockInput');
+  const attemptUnlock = () => {
+    const value = input.value.replace(/\D/g, '').slice(0, 4);
+    input.value = value;
+    if (value.length < 4) return;
+    if (value !== BIRTHDAY.code) {
+      form.classList.remove('wrong');
+      void form.offsetWidth;
+      form.classList.add('wrong');
+      input.value = '';
+      return;
     }
+    unlockBirthdaySettings();
+    form.hidden = true;
+    const ov = document.getElementById('overlay');
+    if (ov && !ov.classList.contains('hidden')) ov.click();   // 进入 + 开声
+    activateBirthday();
+  };
+  form.addEventListener('click', e => e.stopPropagation());
+  form.addEventListener('submit', e => { e.preventDefault(); e.stopPropagation(); attemptUnlock(); });
+  input.addEventListener('input', attemptUnlock);
+  input.addEventListener('keydown', e => e.stopPropagation());
+  input.addEventListener('paste', e => e.stopPropagation());
+  input.addEventListener('pointerdown', e => e.stopPropagation());
+  input.addEventListener('click', e => e.stopPropagation());
+  input.addEventListener('focus', e => e.stopPropagation());
+  input.addEventListener('blur', () => {
+    if (!birthdaySettingsUnlocked) input.value = '';
+  });
+  if (birthdaySettingsUnlocked) {
+    form.hidden = true;
   }
-});
+}
 
 // —— 🎂 页面内编辑器（无需改代码，存本地浏览器）——
 {
   const ed = document.getElementById('bdayEditor');
   const $ = id => document.getElementById(id);
   const open = () => {
+    if (!birthdaySettingsUnlocked) return;
     $('beName').value = BIRTHDAY.name; $('beGreet').value = BIRTHDAY.greet;
     $('beCard').value = BIRTHDAY.card.join('\n'); $('beTheme').value = String(BIRTHDAY.theme);
     $('beCode').value = BIRTHDAY.code; ed.classList.add('open');
@@ -2993,11 +3247,18 @@ addEventListener('keydown', (e) => {
   $('beClose').addEventListener('click', close);
   ed.addEventListener('click', e => { if (e.target === ed) close(); });
   $('beApply').addEventListener('click', () => {
+    const nextCode = normalizeBirthdayCode($('beCode').value);
+    if (!nextCode) {
+      $('beCode').setCustomValidity('请输入有效的四位生日月日，例如 0622');
+      $('beCode').reportValidity();
+      return;
+    }
+    $('beCode').setCustomValidity('');
     BIRTHDAY.name  = $('beName').value.trim() || 'NAME';
     BIRTHDAY.greet = $('beGreet').value.trim() || 'Happy Birthday';
     BIRTHDAY.card  = $('beCard').value.split('\n');
     BIRTHDAY.theme = $('beTheme').value;
-    BIRTHDAY.code  = ($('beCode').value || '0622').trim();
+    BIRTHDAY.code  = nextCode;
     try { localStorage.setItem('campfireBday', JSON.stringify(BIRTHDAY)); } catch {}
     applyBdayTheme(); buildBirthdayText(); close();
     const ov = document.getElementById('overlay');
@@ -3011,7 +3272,6 @@ addEventListener('keydown', (e) => {
       }
     }
   });
-  const link = $('ovBdayEdit'); if (link) link.addEventListener('click', e => { e.stopPropagation(); open(); });
   const gear = $('bdayGear'); if (gear) gear.addEventListener('click', open);
 }
 
