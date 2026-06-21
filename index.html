@@ -234,11 +234,11 @@
 
   /* 隐蔽的四位彩蛋入口 + 页面内编辑器 */
   #bdayUnlock {
-    width: max-content; margin: 16px auto 0; opacity: .42;
+    width: max-content; margin: 16px auto 0; opacity: .82;
     display: flex; align-items: center; justify-content: center; gap: 12px;
     transition: opacity .25s ease;
   }
-  #bdayUnlock:focus-within { opacity: .86; }
+  #bdayUnlock:focus-within { opacity: 1; }
   #bdayUnlockHint {
     display: block; color: rgba(225,232,244,.74);
     text-align: right; font: 14px/1.2 var(--camp-ui-font);
@@ -253,6 +253,48 @@
   }
   #bdayUnlockInput:focus { border-color: rgba(225,190,125,.48); background: rgba(18,20,24,.42); }
   #bdayUnlockInput::placeholder { color: rgba(220,228,242,.52); }
+
+  /* 流线动感：四位口令入口的流光边框 + 掠光 + 脉动外发光 */
+  @property --unlockFlow { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+  .unlock-field {
+    position: relative; display: inline-flex; padding: 2px; border-radius: 9px;
+    isolation: isolate; animation: unlockGlow 3.4s ease-in-out infinite;
+  }
+  .unlock-field::before {            /* 绕着边框流动的光带 */
+    content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1.6px;
+    background: conic-gradient(from var(--unlockFlow),
+      rgba(255,209,138,0) 0deg, rgba(255,209,138,0) 60deg,
+      rgba(255,226,172,.95) 120deg, rgba(255,176,92,.6) 168deg,
+      rgba(255,209,138,0) 220deg, rgba(255,209,138,0) 360deg);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor; mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask-composite: exclude; animation: unlockFlowSpin 3.4s linear infinite;
+    pointer-events: none; z-index: 2;
+  }
+  .unlock-field::after {             /* 横向掠过的一道流线 */
+    content: ""; position: absolute; inset: 2px; border-radius: 7px;
+    background: linear-gradient(105deg, transparent 38%, rgba(255,238,205,.55) 50%, transparent 62%);
+    background-size: 220% 100%; background-repeat: no-repeat;
+    mix-blend-mode: screen; pointer-events: none; z-index: 3;
+    animation: unlockSweep 3.4s ease-in-out infinite;
+  }
+  @keyframes unlockFlowSpin { to { --unlockFlow: 360deg; } }
+  @keyframes unlockSweep {
+    0% { background-position: 165% 0; opacity: 0; }
+    16% { opacity: 1; }
+    52% { background-position: -65% 0; opacity: 0; }
+    100% { background-position: -65% 0; opacity: 0; }
+  }
+  @keyframes unlockGlow {
+    0%, 100% { filter: drop-shadow(0 0 3px rgba(255,190,110,.25)); }
+    50% { filter: drop-shadow(0 0 9px rgba(255,198,122,.55)); }
+  }
+  #bdayUnlock:focus-within .unlock-field { animation: none; filter: drop-shadow(0 0 11px rgba(255,202,130,.6)); }
+  #bdayUnlock:focus-within .unlock-field::before { animation-duration: 1.9s; }
+  #bdayUnlock:focus-within .unlock-field::after { animation-duration: 1.9s; }
+  @media (prefers-reduced-motion: reduce) {
+    .unlock-field, .unlock-field::before, .unlock-field::after { animation: none; }
+  }
   #bdayUnlock.wrong { animation: unlockWrong .28s ease; }
   @keyframes unlockWrong {
     25%, 75% { transform: translateX(-3px); }
@@ -307,8 +349,10 @@
   <p id="ovHint">拖动旋转 · 滚轮缩放 —— 远离篝火，声音按 1/r 衰减</p>
   <form id="bdayUnlock" autocomplete="off">
     <label id="bdayUnlockHint" for="bdayUnlockInput">月日 · MMDD</label>
-    <input id="bdayUnlockInput" type="password" inputmode="numeric" maxlength="4"
-      pattern="[0-9]{4}" placeholder="····">
+    <span class="unlock-field">
+      <input id="bdayUnlockInput" type="password" inputmode="numeric" maxlength="4"
+        pattern="[0-9]{4}" placeholder="····">
+    </span>
   </form>
   <a id="ovGithub" class="gh-link" href="https://github.com/leezelyn" target="_blank" rel="noopener" onclick="event.stopPropagation()">
     <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 014 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>github.com/leezelyn
