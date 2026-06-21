@@ -387,7 +387,7 @@
   </select></label>
   <label>生日月日（4 位口令）<input id="beCode" type="text" inputmode="numeric" maxlength="4" placeholder="例如 0622"></label>
   <div class="be-row"><button id="beApply">保存并预览 🎉</button><button id="beClose">关闭</button></div>
-  <p class="be-tip">按 MMDD 设置生日月日，例如 6 月 22 日填写 0622。刷新后输入该日期，才会显示设置入口并触发惊喜。</p>
+  <p class="be-tip">按 MMDD 设置生日月日，例如 6 月 22 日填写 0622。刷新后输入该日期，才会显示设置入口并触发惊喜。<br>「保存并预览」只存到本机浏览器；要对所有访客永久生效，请直接编辑服务器上的 bday.json（与 index.html 同目录，无需后端）。</p>
 </div></div>
 <a id="ghCorner" class="gh-link" href="https://github.com/leezelyn" target="_blank" rel="noopener" title="GitHub · leezelyn">
   <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 014 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>leezelyn
@@ -3130,6 +3130,23 @@ function buildBirthdayText() {
   bdayTextReveal = 0; bdayTextActive = false;
 }
 buildBirthdayText();
+
+// 从静态 bday.json 载入服务器端共享的祝福（无需后端；本地 localStorage 仍可覆盖以即时预览）
+(async () => {
+  try {
+    const r = await fetch('bday.json', { cache: 'no-store' });
+    if (!r.ok) return;
+    const data = await r.json();
+    if (!data || typeof data !== 'object') return;
+    let local = {};
+    try { local = JSON.parse(localStorage.getItem('campfireBday') || '{}'); } catch {}
+    Object.assign(BIRTHDAY, data, local);                 // 默认 < 服务器文件 < 本机编辑
+    BIRTHDAY.code = normalizeBirthdayCode(BIRTHDAY.code) || '0622';
+    if (typeof BIRTHDAY.card === 'string') BIRTHDAY.card = BIRTHDAY.card.split('\n');
+    buildBirthdayText();
+  } catch {}
+})();
+
 function updateBirthdayText(dt, t) {
   if (!bdayTextSys || !bdayTextActive) return;
   bdayTextSys.mat.uniforms.uScale.value = fireflySys.mat.uniforms.uScale.value;
