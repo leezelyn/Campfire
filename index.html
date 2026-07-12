@@ -399,6 +399,7 @@
   <button id="kettleBtn">🫖 煮水</button>
   <button id="torchBtn">🔥 点燃火把</button>
   <button id="pineconeBtn">🌰 投掷松果</button>
+  <button id="chopBtn">🪓 劈柴</button>
   <button id="tidyBtn">🧹 收拾物品</button>
 </div>
 <div id="panel">
@@ -1047,6 +1048,7 @@ function makeTree(x, z, s) {
    均投射阴影、被火光与提灯暖光照亮（避开朝湖/月的视野走廊）
    ============================================================ */
 let lanternGlowMat = null;
+let chopRig = null;   // 劈柴桩（含斧头）——「劈柴」互动在它上面进行
 const campLight = new THREE.PointLight(0xffb259, 0, 7, 2);   // 提灯暖光（不投影，点缀补光）
 const campProps = [];
 scene.add(campLight);
@@ -1671,6 +1673,7 @@ fireGroup.add(fireFill);
     axe.position.set(0.045, 0.36, -0.03);   // 刃口没入桩顶
     axe.rotation.set(0.12, 0.4, -0.42);
     g.add(axe);
+    g.userData.axe = axe;                   // 劈柴互动要抡它
     return g;
   }
   // 搪瓷杯：珐琅白杯身 + 深色包边 + 环形把手
@@ -1694,7 +1697,8 @@ fireGroup.add(fireFill);
     return g;
   }
   placeProp(makeWoodPile(), 2.95, 2.7, true);   // 柴垛：帐篷旁的后侧
-  placeProp(makeStump(), -0.95, 2.45, true);    // 劈柴桩：火把架外侧
+  chopRig = makeStump();
+  placeProp(chopRig, -0.95, 2.45, true);        // 劈柴桩：火把架外侧
   placeProp(makeMug(), 0.34, 1.5, true);        // 搪瓷杯：折叠椅脚边
 }
 
@@ -2283,6 +2287,7 @@ const actionButtons = {
   kettle: document.getElementById('kettleBtn'),
   torch: document.getElementById('torchBtn'),
   pinecone: document.getElementById('pineconeBtn'),
+  chop: document.getElementById('chopBtn'),
   tidy: document.getElementById('tidyBtn')
 };
 let campTidied = false;
@@ -2780,6 +2785,156 @@ function updatePinecones(dt) {
   }
 }
 
+// 5) 劈柴：树桩上立一段原木，斧头抡起劈下——木柴裂成两半带着木屑弹开
+//    斧头复用劈柴桩道具里插着的那把（chopRig.userData.axe），位姿在三个关键帧间插值
+const chopAction = { state: 'idle', time: 0 };
+const CHOP_POSE = {
+  idle:   { p: [0.045, 0.36, -0.03], r: [0.12, 0.4, -0.42] },   // 刃口没入桩顶（道具原位）
+  raised: { p: [0.02, 0.85, -0.30],  r: [-1.6, 0.1, 0] },       // 向后抡起过肩
+  impact: { p: [0.0, 0.70, -0.02],   r: [1.3, 0, 0] }           // 劈中原木顶部
+};
+const chopBarkMat = new THREE.MeshStandardMaterial({ color: 0x4d331a, roughness: 0.95 });
+const chopCutMat = new THREE.MeshStandardMaterial({ color: 0xc8a468, roughness: 0.9 });
+// 待劈原木：立在桩顶（局部 y 0.342 起，高 0.30）
+const chopLog = new THREE.Group();
+{
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.058, 0.30, 12), chopBarkMat);
+  body.position.y = 0.15;
+  body.castShadow = true;
+  const cap = new THREE.Mesh(new THREE.CircleGeometry(0.052, 12), chopCutMat);
+  cap.rotation.x = -Math.PI / 2;
+  cap.position.y = 0.302;
+  chopLog.add(body, cap);
+  chopLog.visible = false;
+}
+// 共享几何（标记 shared，回收碎块时不释放）：半瓣柴 = 半圆柱壳 + 浅色劈面
+const chopHalfGeo = new THREE.CylinderGeometry(0.055, 0.055, 0.30, 10, 1, false, 0, Math.PI);
+const chopFaceGeo = new THREE.PlaneGeometry(0.11, 0.30);
+const chopChipGeo = new THREE.BoxGeometry(0.028, 0.014, 0.02);
+for (const g of [chopHalfGeo, chopFaceGeo, chopChipGeo]) g.userData.shared = true;
+const chopDebris = [];
+
+function makeChopHalf() {
+  const g = new THREE.Group();
+  const shell = new THREE.Mesh(chopHalfGeo, chopBarkMat);
+  shell.castShadow = true;
+  const face = new THREE.Mesh(chopFaceGeo, chopCutMat);
+  face.material = chopCutMat;
+  face.position.z = 0.001;
+  face.rotation.y = Math.PI;          // 平面朝向壳体开口一侧
+  g.add(shell, face);
+  return g;
+}
+
+function startChopping() {
+  if (campTidied || !chopRig || chopAction.state !== 'idle') return;
+  chopAction.state = 'place';
+  chopAction.time = 0;
+  if (!chopLog.parent) chopRig.add(chopLog);
+  chopLog.visible = true;
+  chopLog.position.set(0, 0.52, 0);   // 从桩顶上方落下
+}
+
+function chopLerpPose(A, B, k) {
+  const axe = chopRig.userData.axe;
+  axe.position.set(
+    A.p[0] + (B.p[0] - A.p[0]) * k,
+    A.p[1] + (B.p[1] - A.p[1]) * k,
+    A.p[2] + (B.p[2] - A.p[2]) * k
+  );
+  axe.rotation.set(
+    A.r[0] + (B.r[0] - A.r[0]) * k,
+    A.r[1] + (B.r[1] - A.r[1]) * k,
+    A.r[2] + (B.r[2] - A.r[2]) * k
+  );
+}
+
+function chopSplit() {
+  chopLog.visible = false;
+  // 两瓣半柴向两侧翻飞
+  for (const s of [-1, 1]) {
+    const half = makeChopHalf();
+    half.position.set(s * 0.05, 0.5, 0);
+    half.rotation.y = s > 0 ? Math.PI / 2 : -Math.PI / 2;   // 劈面相对而开
+    chopRig.add(half);
+    chopDebris.push({
+      mesh: half, kind: 'half', state: 'fly', age: 0, restY: 0.058,
+      vel: new THREE.Vector3(s * (0.55 + Math.random() * 0.35), 1.1 + Math.random() * 0.5, (Math.random() - 0.5) * 0.5),
+      spinZ: s * (5 + Math.random() * 4), spinY: (Math.random() - 0.5) * 3
+    });
+  }
+  // 木屑
+  for (let i = 0; i < 5; i++) {
+    const chip = new THREE.Mesh(chopChipGeo, chopCutMat);
+    chip.position.set(0, 0.55, 0);
+    chopRig.add(chip);
+    chopDebris.push({
+      mesh: chip, kind: 'chip', state: 'fly', age: 0, restY: 0.012,
+      vel: new THREE.Vector3((Math.random() - 0.5) * 1.8, 1.2 + Math.random() * 0.9, (Math.random() - 0.5) * 1.8),
+      spinZ: (Math.random() - 0.5) * 16, spinY: (Math.random() - 0.5) * 10
+    });
+  }
+  if (audio) audio.playChop();
+  showActivityMessage('chopDone', 2.2);
+}
+
+function updateChop(dt, t) {
+  // 碎块物理：重力 + 落地反弹一次后静置；木屑短命；半柴上限 8 块
+  for (let i = chopDebris.length - 1; i >= 0; i--) {
+    const d = chopDebris[i];
+    d.age += dt;
+    if (d.state === 'fly') {
+      d.vel.y -= 9.8 * dt;
+      d.mesh.position.addScaledVector(d.vel, dt);
+      d.mesh.rotation.z += d.spinZ * dt;
+      d.mesh.rotation.y += d.spinY * dt;
+      if (d.vel.y < 0 && d.mesh.position.y <= d.restY) {
+        if (d.kind === 'half' && Math.abs(d.vel.y) > 1.2) {
+          d.vel.y *= -0.32; d.vel.x *= 0.6; d.vel.z *= 0.6; d.spinZ *= 0.5;   // 弹一下
+          d.mesh.position.y = d.restY;
+        } else {
+          d.state = 'rest';
+          d.mesh.position.y = d.restY;
+          if (d.kind === 'half') d.mesh.rotation.z = (d.mesh.rotation.z > 0 ? 1 : -1) * Math.PI / 2;  // 躺平
+        }
+      }
+    }
+    if (d.kind === 'chip' && d.age > 1.6) {
+      d.mesh.removeFromParent();
+      chopDebris.splice(i, 1);
+    }
+  }
+  const resting = chopDebris.filter(d => d.kind === 'half' && d.state === 'rest');
+  while (resting.length > 8) {
+    const old = resting.shift();
+    disposeObject3D(old.mesh);
+    chopDebris.splice(chopDebris.indexOf(old), 1);
+  }
+
+  const a = chopAction;
+  if (a.state === 'idle' || !chopRig) return;
+  a.time += dt;
+  if (a.state === 'place') {                                   // 原木落上桩顶
+    const k = Math.min(1, a.time / 0.25);
+    chopLog.position.y = 0.342 + (1 - k) * 0.18;
+    if (k >= 1) { a.state = 'raise'; a.time = 0; }
+  } else if (a.state === 'raise') {                            // 抡斧过肩
+    const k = THREE.MathUtils.smoothstep(Math.min(1, a.time / 0.5), 0, 1);
+    chopLerpPose(CHOP_POSE.idle, CHOP_POSE.raised, k);
+    if (k >= 1) { a.state = 'swing'; a.time = 0; }
+  } else if (a.state === 'swing') {                            // 加速劈下
+    const k = Math.min(1, a.time / 0.13);
+    chopLerpPose(CHOP_POSE.raised, CHOP_POSE.impact, k * k);
+    if (k >= 1) { chopSplit(); a.state = 'hold'; a.time = 0; }
+  } else if (a.state === 'hold') {                             // 斧头顿在桩上
+    if (a.time >= 0.18) { a.state = 'return'; a.time = 0; }
+  } else {                                                     // 收斧回原位
+    const k = THREE.MathUtils.smoothstep(Math.min(1, a.time / 0.55), 0, 1);
+    chopLerpPose(CHOP_POSE.impact, CHOP_POSE.idle, k);
+    if (k >= 1) a.state = 'idle';
+  }
+}
+
 function refreshActionButtons() {
   const roastActive = marshmallowAction.state !== 'idle';
   const kettleActive = kettleAction.state !== 'idle';
@@ -2788,10 +2943,12 @@ function refreshActionButtons() {
   actionButtons.kettle.disabled = campTidied || kettleActive;
   actionButtons.torch.disabled = campTidied || torchBusy;
   actionButtons.pinecone.disabled = campTidied;
+  actionButtons.chop.disabled = campTidied || chopAction.state !== 'idle';
   actionButtons.tidy.disabled = false;
   actionButtons.roast.classList.toggle('active', roastActive);
   actionButtons.kettle.classList.toggle('active', kettleActive);
   actionButtons.torch.classList.toggle('active', torchAction.state === 'lit' || torchBusy);
+  actionButtons.chop.classList.toggle('active', chopAction.state !== 'idle');
   actionButtons.tidy.classList.toggle('active', campTidied);
   actionButtons.roast.textContent = roastActive
     ? tr('roastProgress')(Math.round(marshmallowAction.progress * 100)) : tr('roast');
@@ -2799,6 +2956,7 @@ function refreshActionButtons() {
     ? tr('kettleProgress')(Math.round(kettleAction.progress * 100)) : tr('kettle');
   actionButtons.torch.textContent = torchAction.state === 'lit' ? tr('extinguishTorch') : tr('lightTorch');
   actionButtons.pinecone.textContent = tr('throwPinecone');
+  actionButtons.chop.textContent = tr('chop');
   actionButtons.tidy.textContent = tr(campTidied ? 'placeItems' : 'tidyItems');
 }
 
@@ -2834,6 +2992,17 @@ function tidyCampItems() {
   torchLight.intensity = 0;
 
   while (pinecones.length) disposeObject3D(pinecones.pop().group);
+
+  chopAction.state = 'idle';
+  chopAction.time = 0;
+  chopLog.visible = false;
+  if (chopRig) chopLerpPose(CHOP_POSE.idle, CHOP_POSE.idle, 1);   // 斧头归位插回桩顶
+  while (chopDebris.length) {
+    const d = chopDebris.pop();
+    if (d.kind === 'chip') d.mesh.removeFromParent();
+    else disposeObject3D(d.mesh);
+  }
+
   for (const moth of moths) moth.target = mothFireTarget;
 
   showActivityMessage('campTidied', 3.5);
@@ -2872,6 +3041,9 @@ function updateActivityUi(dt) {
   if (torchAction.state === 'lighting' || torchAction.state === 'returning') {
     active.push(tr('torchLighting'));
   }
+  if (chopAction.state !== 'idle') {
+    active.push(tr('chopping'));
+  }
   if (active.length) {
     activityStatus.textContent = active.join(' · ');
   } else if (activityMessageKey && performance.now() < activityMessageUntil) {
@@ -2886,6 +3058,7 @@ function updateCampActivities(dt, t) {
   updateKettle(dt, t);
   updateTorch(dt, t);
   updatePinecones(dt);
+  updateChop(dt, t);
   updateActivityUi(dt);
 }
 
@@ -2897,6 +3070,7 @@ actionButtons.pinecone.addEventListener('click', () => {
   actionButtons.pinecone.disabled = true;
   setTimeout(() => { if (!campTidied) actionButtons.pinecone.disabled = false; }, 450);
 });
+actionButtons.chop.addEventListener('click', startChopping);
 actionButtons.tidy.addEventListener('click', tidyCampItems);
 
 // 每帧校验视口：窗口隐藏时浏览器报告 0 尺寸且恢复可见不一定触发 resize 事件
@@ -3076,6 +3250,28 @@ function startAudio() {
     hissGain.gain.setTargetAtTime(0.05, now + 1.2, 0.8);
   };
 
+  // 6) 劈柴音效：高频脆裂（噪声高速播放 + 带通）+ 低频砍击
+  const playChop = () => {
+    const crack = ctx.createBufferSource();
+    crack.buffer = thudBuf;
+    crack.playbackRate.value = 3.2 + Math.random() * 0.8;   // 0.2s 噪声 → ~60ms 脆响
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass'; bp.frequency.value = 1800 + Math.random() * 700; bp.Q.value = 0.8;
+    const g1 = ctx.createGain();
+    g1.gain.value = 1.1;
+    crack.connect(bp).connect(g1).connect(fireMix);
+    crack.start();
+    const thunk = ctx.createBufferSource();
+    thunk.buffer = thudBuf;
+    thunk.playbackRate.value = 1.5 + Math.random() * 0.3;
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass'; lp.frequency.value = 420;
+    const g2 = ctx.createGain();
+    g2.gain.value = 1.2;
+    thunk.connect(lp).connect(g2).connect(fireMix);
+    thunk.start();
+  };
+
   // 7) 远处动物：夜枭低鸣（双声 hoo-hoo）+ 偶发蟋蟀虫鸣
   //    非定位、随机稀疏触发；经听者主增益 → 受总音量控制
   const critterBus = ctx.createGain();
@@ -3120,7 +3316,7 @@ function startAudio() {
     else if (r < 0.85) playCricket();
   }, 8000);
 
-  audio = { ctx, roarGain, airFilter, crackleTimer, critterTimer, windGain, playThud };
+  audio = { ctx, roarGain, airFilter, crackleTimer, critterTimer, windGain, playThud, playChop };
 }
 
 /* ============================================================
@@ -3143,6 +3339,7 @@ const I18N = {
     lightTorch: '🔥 点燃火把',
     extinguishTorch: '💨 熄灭火把',
     throwPinecone: '🌰 投掷松果',
+    chop: '🪓 劈柴',
     tidyItems: '🧹 收拾物品',
     placeItems: '⛺ 摆放物品',
     roastProgress: p => `🍡 烘烤 ${p}%`,
@@ -3156,6 +3353,8 @@ const I18N = {
     torchOff: '火把已熄灭',
     needFire: '火势太弱，先加一根木柴',
     pineconeThrown: '松果落入火堆，迸出了一阵火星',
+    chopping: '正在劈柴',
+    chopDone: '咔嚓——木柴劈成了两半',
     campTidied: '营地物品已收好，只留下篝火',
     campPlaced: '帐篷、椅子、背包和提灯已重新摆放',
     panelTitle: '⚙ 参数调节',
@@ -3206,6 +3405,7 @@ const I18N = {
     lightTorch: '🔥 Light torch',
     extinguishTorch: '💨 Extinguish torch',
     throwPinecone: '🌰 Toss pinecone',
+    chop: '🪓 Chop wood',
     tidyItems: '🧹 Pack up',
     placeItems: '⛺ Set up camp',
     roastProgress: p => `🍡 Roasting ${p}%`,
@@ -3219,6 +3419,8 @@ const I18N = {
     torchOff: 'The torch is out',
     needFire: 'The fire is too weak — add a log first',
     pineconeThrown: 'The pinecone lands in the fire with a burst of sparks',
+    chopping: 'Chopping firewood',
+    chopDone: 'Crack — the log splits in two',
     campTidied: 'Camp items packed away; only the fire remains',
     campPlaced: 'The tent, chair, backpack, and lantern are set up again',
     panelTitle: '⚙ Parameters',
@@ -3269,6 +3471,7 @@ const I18N = {
     lightTorch: '🔥 松明に火をつける',
     extinguishTorch: '💨 松明を消す',
     throwPinecone: '🌰 松ぼっくりを投げる',
+    chop: '🪓 薪割り',
     tidyItems: '🧹 道具を片付ける',
     placeItems: '⛺ 道具を設置する',
     roastProgress: p => `🍡 焼き中 ${p}%`,
@@ -3282,6 +3485,8 @@ const I18N = {
     torchOff: '松明を消しました',
     needFire: '火が弱すぎます。先に薪をくべてください',
     pineconeThrown: '松ぼっくりが火に入り、火の粉が舞いました',
+    chopping: '薪を割っています',
+    chopDone: 'パカッ——薪が二つに割れました',
     campTidied: 'キャンプ道具を片付け、焚き火だけを残しました',
     campPlaced: 'テント、椅子、バックパック、ランタンを再設置しました',
     panelTitle: '⚙ パラメータ',
@@ -4015,7 +4220,7 @@ applyLang(lang);
 // 调试钩子：在 rAF 被节流的环境（如隐藏窗口）中手动驱动帧
 window.__campfire = {
   renderer, scene, camera, step, P, applyLang, tossLog, activateBirthday,
-  startRoasting, startKettle, toggleTorch, throwPinecone, tidyCampItems, placeCampItems,
+  startRoasting, startKettle, toggleTorch, throwPinecone, startChopping, tidyCampItems, placeCampItems,
   isCampTidied: () => campTidied,
   getFuel: () => ({ fuel, fuelTarget, fireHealth, fireDrive, collapseAmt }) };
 
