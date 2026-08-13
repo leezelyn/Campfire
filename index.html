@@ -51,12 +51,13 @@
   }
   #overlay.hidden { opacity: 0; pointer-events: none; }
   /* 启动遮罩期间隐藏操作 UI（参数面板 / HUD / 加柴按钮），进入后随遮罩淡出再淡入 */
-  #hud, #addLog, #activityBar, #activityStatus, #panel, #ghCorner { transition: opacity .9s ease .35s; }
+  #hud, #addLog, #activityBar, #activityStatus, #panel, #ghCorner, #sceneSwitch { transition: opacity .9s ease .35s; }
   #overlay:not(.hidden) ~ #hud,
   #overlay:not(.hidden) ~ #addLog,
   #overlay:not(.hidden) ~ #activityBar,
   #overlay:not(.hidden) ~ #activityStatus,
   #overlay:not(.hidden) ~ #panel,
+  #overlay:not(.hidden) ~ #sceneSwitch,
   #overlay:not(.hidden) ~ #ghCorner { opacity: 0; pointer-events: none; transition: none; }
   #overlay h1 { font-size: 42px; font-weight: 300; letter-spacing: .35em; margin: 0 0 18px; text-indent: .35em; }
   #overlay p  { font-size: 15px; color: #b8a98f; margin: 6px 0; letter-spacing: .1em; }
@@ -163,7 +164,8 @@
     position: fixed; top: 14px; left: 16px; z-index: 11;   /* 高于启动遮罩，进入前也能切换语言 */
     display: flex; gap: 6px;
   }
-  #langSwitch button {
+  #langSwitch button,
+  #sceneSwitch button {
     padding: 6px 11px; border-radius: 999px;
     background: rgba(8,12,22,.84); color: #cfc2ab;
     border: 1px solid rgba(255,160,70,.25);
@@ -171,10 +173,18 @@
     cursor: pointer; backdrop-filter: blur(6px);
     transition: color .15s, background .15s, border-color .15s;
   }
-  #langSwitch button:hover { color: #ffc890; }
-  #langSwitch button.active {
+  #langSwitch button:hover,
+  #sceneSwitch button:hover { color: #ffc890; }
+  #langSwitch button.active,
+  #sceneSwitch button.active {
     background: rgba(60,32,12,.9); color: #ffb46a;
     border-color: rgba(255,160,70,.6);
+  }
+
+  /* 场景切换（森林 / 海边）：语言切换下方，进入前隐藏 */
+  #sceneSwitch {
+    position: fixed; top: 52px; left: 16px; z-index: 5;
+    display: flex; gap: 6px;
   }
 
   /* 🎂 生日祝福卡（逐字浮现） */
@@ -363,6 +373,10 @@
   <button data-lang="en">EN</button>
   <button data-lang="ja">日</button>
 </div>
+<div id="sceneSwitch">
+  <button data-scene="forest" class="active">🌲 森林</button>
+  <button data-scene="beach">🏖 海边</button>
+</div>
 <div id="hud"></div>
 <div id="bdayCard">
   <div id="bdayCardHead">🎁</div>
@@ -420,6 +434,13 @@ const UP_AXIS = new THREE.Vector3(0, 1, 0);   // 提前声明：makeChair→make
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(NIGHT);
 scene.fog = new THREE.FogExp2(NIGHT, 0.012);
+
+// 场景分组：森林 / 海边二选一显示；篝火、营地道具、天空（星月云）两景共用
+const forestEnv = new THREE.Group();
+const beachEnv = new THREE.Group();
+beachEnv.visible = false;
+scene.add(forestEnv, beachEnv);
+let sceneMode = 'forest';   // 'forest' | 'beach'，由 applyScene 切换
 
 const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 1000);
 camera.position.set(3.6, 2.0, 5.4);
@@ -540,7 +561,7 @@ const ground = new THREE.Mesh(
 );
 ground.rotation.x = -Math.PI / 2;
 ground.receiveShadow = true;
-scene.add(ground);
+forestEnv.add(ground);
 
 // 火堆周围的营地土细节层：一张不平铺的贴图叠在地面上，
 // 打破近景的 12×12 平铺重复感；边缘羽化融入、中央让位炭床
@@ -585,7 +606,7 @@ scene.add(ground);
   patch.rotation.x = -Math.PI / 2;
   patch.position.y = 0.012;
   patch.receiveShadow = true;
-  scene.add(patch);
+  forestEnv.add(patch);
 }
 
 // 近景散布：碎石与枯枝（各一个 InstancedMesh，各一次 draw call），
@@ -612,7 +633,7 @@ scene.add(ground);
     pebbles.setMatrixAt(i, dummy.matrix);
   }
   pebbles.receiveShadow = true;
-  scene.add(pebbles);
+  forestEnv.add(pebbles);
 
   const twigs = new THREE.InstancedMesh(
     makeLogGeometry(0.7, 1, 1, 6.1),
@@ -634,7 +655,7 @@ scene.add(ground);
   }
   twigs.castShadow = true;
   twigs.receiveShadow = true;
-  scene.add(twigs);
+  forestEnv.add(twigs);
   dummy.quaternion.identity();
 }
 
@@ -894,7 +915,7 @@ function setMoonPhase(deg) {
     m.position.set(Math.cos(a) * d, -vh * 0.2, Math.sin(a) * d);   // 略下沉，底融地平
     m.rotation.y = rng() * Math.PI;
     m.rotation.z = (rng() - 0.5) * 0.55;              // 都倾斜成脊、不对称更自然
-    scene.add(m);
+    forestEnv.add(m);
   }
 }
 
@@ -952,7 +973,7 @@ const lakeGlints = [];
       });
     }
   }
-  scene.add(lakeGroup);
+  forestEnv.add(lakeGroup);
 }
 function updateLake(t) {
   const dim = 1 - 0.6 * cloudNow;                       // 云遮月 → 倒影碎光同步变暗
@@ -1027,7 +1048,7 @@ function makeTree(x, z, s) {
   }
   tree.position.set(x, groundHeight(x, z) - 0.03, z);
   tree.rotation.y = Math.random() * Math.PI * 2;
-  scene.add(tree);
+  forestEnv.add(tree);
   trees.push({ g: tree, ph: Math.random() * 6.28, sp: 0.5 + Math.random() * 0.5, amp: 0.012 + Math.random() * 0.022 });
 }
 {
@@ -1044,6 +1065,355 @@ function makeTree(x, z, s) {
 }
 
 /* ============================================================
+   海边场景：月光沙滩 + 夜海 —— 与森林场景二选一显示（beachEnv）。
+   营地与篝火在原点不动，大海在湖面同一方位（默认视角的视野走廊）；
+   泡沫线周期性冲上沙滩，月光在海面拉出碎光带，棕榈随风摇动
+   ============================================================ */
+const SEA_AZ = Math.atan2(-38, -24);                    // 与湖同方位：默认视角正对大海
+const SEA_DIR = { x: Math.cos(SEA_AZ), z: Math.sin(SEA_AZ) };
+const WATER_Y = -0.35;                                  // 海平面高度
+const SHORE_S = 8.9;                                    // 岸线离营地的朝海距离（beachHeight 与海面的交线）
+// 沙滩地形：营地平整，向海一侧缓坡入水，其余方向低矮沙丘
+function beachHeight(x, z) {
+  const s = x * SEA_DIR.x + z * SEA_DIR.z;              // 朝海方向的带符号距离
+  const q = x * SEA_DIR.z - z * SEA_DIR.x;              // 沿岸线的横向坐标
+  const ramp = THREE.MathUtils.smoothstep(Math.hypot(x, z), 4.5, 11);
+  // 岸线不走直线：水线沿沙滩横向进退（大弯 + 小折），营地附近不受影响
+  const wob = (1.2 * triNoise(q * 0.045, 0, 3.3, 9.1) + 0.5 * triNoise(q * 0.16, 0, 7.7, 4.6))
+            * THREE.MathUtils.smoothstep(s, 3, 7);
+  const shore = THREE.MathUtils.smoothstep(s, 5.5 + wob, 15 + wob);
+  const dune = (0.22 * triNoise(x * 0.06, 0, z * 0.06, 21.7)
+              + 0.08 * triNoise(x * 0.15, 1, z * 0.15, 4.2)) * ramp;
+  return dune * (1 - shore) - 1.1 * shore;
+}
+const oceanGlints = [];   // 海面碎光（月光倒影带）
+const shoreFoam = [];     // 冲滩泡沫线
+const swellBands = [];    // 近岸涌浪亮带
+{
+  const rng = mulberry32(207);
+  // —— 沙地：程序化沙粒贴图（比林地土色更浅、颗粒更细）——
+  const S = 512;
+  const col = document.createElement('canvas'); col.width = col.height = S;
+  const bmp = document.createElement('canvas'); bmp.width = bmp.height = S;
+  const gc = col.getContext('2d'), gb = bmp.getContext('2d');
+  gc.fillStyle = '#847358'; gc.fillRect(0, 0, S, S);
+  gb.fillStyle = '#7a7a7a'; gb.fillRect(0, 0, S, S);
+  gc.filter = 'blur(30px)';                             // 大尺度明暗沙斑
+  for (let i = 0; i < 20; i++) {
+    const l = rng();
+    gc.fillStyle = `rgba(${110 + l * 60 | 0},${96 + l * 52 | 0},${70 + l * 40 | 0},0.4)`;
+    gc.beginPath(); gc.ellipse(rng() * S, rng() * S, 50 + rng() * 100, 36 + rng() * 70, rng() * 3, 0, 7); gc.fill();
+  }
+  gc.filter = 'none';
+  for (let i = 0; i < 8000; i++) {                      // 细沙粒（颜色与凹凸逐点对齐）
+    const x = rng() * S, y = rng() * S, l = rng(), sz = 1 + rng() * 1.6;
+    gc.fillStyle = `rgba(${120 + l * 70 | 0},${104 + l * 58 | 0},${76 + l * 44 | 0},${0.25 + rng() * 0.4})`;
+    gc.fillRect(x, y, sz, sz);
+    const bl = (100 + l * 110) | 0;
+    gb.fillStyle = `rgba(${bl},${bl},${bl},${0.2 + rng() * 0.35})`;
+    gb.fillRect(x, y, sz, sz);
+  }
+  const aniso = renderer.capabilities.getMaxAnisotropy();
+  const mk = (cv, srgb) => {
+    const t = new THREE.CanvasTexture(cv);
+    if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+    t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(14, 14); t.anisotropy = aniso;
+    return t;
+  };
+  const sandGeo = new THREE.PlaneGeometry(130, 130, 64, 64);
+  {
+    const pos = sandGeo.attributes.position;
+    for (let i = 0; i < pos.count; i++) pos.setZ(i, beachHeight(pos.getX(i), -pos.getY(i)));
+    sandGeo.computeVertexNormals();
+  }
+  const sand = new THREE.Mesh(sandGeo, new THREE.MeshStandardMaterial({
+    map: mk(col, true), bumpMap: mk(bmp, false), bumpScale: 0.04,
+    roughness: 0.95, metalness: 0
+  }));
+  sand.rotation.x = -Math.PI / 2;
+  sand.receiveShadow = true;
+  beachEnv.add(sand);
+
+  // —— 夜海：深蓝大圆盘（远处被雾融进夜色成地平线），动感全靠碎光/涌浪/泡沫 ——
+  const ocean = new THREE.Mesh(
+    new THREE.CircleGeometry(300, 64),
+    new THREE.MeshBasicMaterial({ color: 0x0c1a2e })
+  );
+  ocean.rotation.x = -Math.PI / 2;
+  ocean.position.y = WATER_Y;
+  beachEnv.add(ocean);
+
+  // 月光倒影碎光：沿月亮方位撒在海面，随时间明灭漂移（云厚时同步变暗）
+  const glintTex = radialTexture(64, [
+    [0, 'rgba(214,230,255,0.9)'], [0.4, 'rgba(180,205,255,0.35)'], [1, 'rgba(150,180,255,0)']
+  ]);
+  const moonAz = Math.atan2(moonDir.z, moonDir.x);
+  const glintGroup = new THREE.Group();
+  glintGroup.rotation.y = -moonAz;                      // 组内 +x 指向月亮方位
+  glintGroup.position.y = WATER_Y + 0.03;
+  beachEnv.add(glintGroup);
+  const gg = new THREE.PlaneGeometry(1, 1);
+  for (let i = 0; i < 26; i++) {
+    const mesh = new THREE.Mesh(gg, new THREE.MeshBasicMaterial({
+      map: glintTex, transparent: true, opacity: 0,
+      blending: THREE.AdditiveBlending, depthWrite: false, fog: false
+    }));
+    mesh.rotation.x = -Math.PI / 2;
+    const r = 13 + rng() * 75;                          // 径向：岸线外 → 远海
+    const x0 = r, z0 = (rng() - 0.5) * (2 + r * 0.22);  // 倒影带随距离展宽
+    mesh.position.set(x0, 0, z0);
+    mesh.scale.set(0.5 + rng() * 0.9, 1.2 + rng() * 2.2, 1);   // 窄条：长轴横向（垂直视线）
+    glintGroup.add(mesh);
+    oceanGlints.push({
+      mesh, x0, z0, ph: rng() * 6.28,
+      sp: 0.5 + rng() * 1.4, baseOp: 0.22 + rng() * 0.38
+    });
+  }
+
+  // —— 岸线组：组内 +z 朝向大海，泡沫线 / 涌浪亮带在其中往复 ——
+  const shoreGroup = new THREE.Group();
+  shoreGroup.rotation.y = Math.atan2(SEA_DIR.x, SEA_DIR.z);
+  beachEnv.add(shoreGroup);
+  // 泡沫贴图：横向白色碎泡带，两端羽化
+  const foamTex = (() => {
+    const c = document.createElement('canvas'); c.width = 256; c.height = 32;
+    const g = c.getContext('2d');
+    g.filter = 'blur(3px)';
+    for (let i = 0; i < 24; i++) {                      // 稀疏碎泡，留出空隙
+      g.fillStyle = `rgba(235,244,255,${0.2 + rng() * 0.4})`;
+      g.beginPath(); g.ellipse(rng() * 256, 10 + rng() * 12, 4 + rng() * 11, 2 + rng() * 3.5, 0, 0, 7); g.fill();
+    }
+    g.globalCompositeOperation = 'destination-in';      // 两端 + 上下缘羽化
+    const m = g.createLinearGradient(0, 0, 256, 0);
+    m.addColorStop(0, 'rgba(0,0,0,0)'); m.addColorStop(0.12, 'rgba(0,0,0,1)');
+    m.addColorStop(0.88, 'rgba(0,0,0,1)'); m.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = m; g.fillRect(0, 0, 256, 32);
+    const mv = g.createLinearGradient(0, 0, 0, 32);
+    mv.addColorStop(0, 'rgba(0,0,0,0)'); mv.addColorStop(0.3, 'rgba(0,0,0,1)');
+    mv.addColorStop(0.7, 'rgba(0,0,0,1)'); mv.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = mv; g.fillRect(0, 0, 256, 32);
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  })();
+  // 浪线条带几何：中段向岸凸出的弧（冲滩舌）+ 沿线折曲，尺寸烘进几何、不再用缩放
+  // （平面 rotation.x=-π/2 后，局部 +y 指向组内 -z 即岸的方向）
+  const makeWaveStrip = (w, d, bow, seed) => {
+    const geo = new THREE.PlaneGeometry(w, d, 32, 3);
+    const p = geo.attributes.position;
+    for (let i = 0; i < p.count; i++) {
+      const u = p.getX(i) / w;                          // -0.5 … 0.5
+      p.setY(i, p.getY(i) + bow * (1 - Math.pow(u * 2, 2))         // 浪弧：中段领先、两端拖后
+                + 0.55 * triNoise(u * 5.2, 0, seed, seed * 1.7));  // 沿线折曲
+    }
+    return geo;
+  };
+  // 冲滩泡沫：短段错落——每段有自己的岸距偏移与节奏，
+  // 低视角下不再连成横贯画面的直线，而是断续的浪花舌
+  for (let i = 0; i < 6; i++) {
+    const mesh = new THREE.Mesh(
+      makeWaveStrip(7 + rng() * 8, 0.9 + rng() * 0.6, 0.5 + rng() * 0.8, 11 + i * 5.3),
+      new THREE.MeshBasicMaterial({ map: foamTex, transparent: true, opacity: 0, depthWrite: false })
+    );
+    mesh.rotation.x = -Math.PI / 2 + 0.08;              // 顺着沙坡微仰
+    const lx = -21 + i * 8.4 + (rng() - 0.5) * 5;       // 沿岸摊开、间距不均
+    mesh.position.set(lx, WATER_Y + 0.05, SHORE_S);
+    shoreGroup.add(mesh);
+    shoreFoam.push({ mesh, lx, ph: rng(), T: 5 + rng() * 2.5, dz: (rng() - 0.5) * 1.6 });
+  }
+  for (let i = 0; i < 4; i++) {                         // 近岸涌浪亮带：短段由远及近推进后隐没
+    const mesh = new THREE.Mesh(
+      makeWaveStrip(14 + rng() * 10, 1.8, 1.0 + rng(), 31 + i * 7.7),
+      new THREE.MeshBasicMaterial({
+        map: foamTex, transparent: true, opacity: 0, color: 0x9fc0e8,
+        blending: THREE.AdditiveBlending, depthWrite: false
+      })
+    );
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.set((rng() - 0.5) * 30, WATER_Y + 0.04, SHORE_S + 8);
+    shoreGroup.add(mesh);
+    swellBands.push({ mesh, ph: rng(), T: 11 + rng() * 4, z0: SHORE_S + 2.5 });
+  }
+
+  // —— 贝壳：岸线附近的浅色小点缀（一次 draw call）——
+  {
+    const shells = new THREE.InstancedMesh(
+      new THREE.SphereGeometry(1, 7, 5),
+      new THREE.MeshStandardMaterial({ color: 0xcfc0a6, roughness: 0.85 }),
+      36
+    );
+    const dummy = new THREE.Object3D();
+    for (let i = 0; i < 36; i++) {
+      const lx = (rng() - 0.5) * 40, lz = 4 + rng() * 4.2;
+      const wx = SEA_DIR.z * lx + SEA_DIR.x * lz;       // 岸线组局部 → 世界
+      const wz = -SEA_DIR.x * lx + SEA_DIR.z * lz;
+      const sc = 0.025 + rng() * 0.035;
+      dummy.position.set(wx, beachHeight(wx, wz) + sc * 0.3, wz);
+      dummy.rotation.set(rng() * 0.6, rng() * 6.28, rng() * 0.6);
+      dummy.scale.set(sc, sc * 0.45, sc * 0.8);
+      dummy.updateMatrix();
+      shells.setMatrixAt(i, dummy.matrix);
+    }
+    shells.receiveShadow = true;
+    beachEnv.add(shells);
+  }
+
+  // —— 漂流木：褪色的枯木横卧在高潮线附近 ——
+  {
+    const driftMat = new THREE.MeshStandardMaterial({ color: 0x6f6150, roughness: 1 });
+    for (let i = 0; i < 2; i++) {
+      const mesh = new THREE.Mesh(makeLogGeometry(0.72, 1, 1, 9.4 + i * 3.1), driftMat);
+      const lx = (i ? -1 : 1) * (8 + rng() * 5), lz = 5.6 + rng() * 1.6;
+      const wx = SEA_DIR.z * lx + SEA_DIR.x * lz;
+      const wz = -SEA_DIR.x * lx + SEA_DIR.z * lz;
+      const rad = 0.07 + rng() * 0.03;
+      mesh.scale.set(rad, 1.3 + rng() * 0.8, rad);
+      mesh.position.set(wx, beachHeight(wx, wz) + rad * 0.9, wz);
+      mesh.rotation.z = Math.PI / 2 + (rng() - 0.5) * 0.15;   // 倒放
+      mesh.rotation.y = rng() * Math.PI;
+      mesh.castShadow = true; mesh.receiveShadow = true;
+      beachEnv.add(mesh);
+    }
+  }
+
+  // —— 近岸礁石：半浸在浪线里的深色岩块 ——
+  {
+    const rockMat = new THREE.MeshStandardMaterial({ color: 0x39332c, roughness: 0.95, flatShading: true });
+    for (let i = 0; i < 3; i++) {
+      const rock = new THREE.Mesh(makeRockGeometry(1, 61 + i * 7, 0.3), rockMat);
+      const lx = (rng() - 0.5) * 34, lz = SHORE_S + rng() * 3;
+      const wx = SEA_DIR.z * lx + SEA_DIR.x * lz;
+      const wz = -SEA_DIR.x * lx + SEA_DIR.z * lz;
+      const sc = 0.35 + rng() * 0.5;
+      rock.scale.set(sc * (0.8 + rng() * 0.5), sc * 0.6, sc);
+      rock.position.set(wx, WATER_Y + sc * 0.12, wz);
+      rock.rotation.y = rng() * Math.PI * 2;
+      rock.castShadow = true; rock.receiveShadow = true;
+      beachEnv.add(rock);
+    }
+  }
+
+  // —— 远处剪影：海上小岛 + 营地背后的海岬余脉（挡住陆侧地平线）——
+  {
+    const islandMat = new THREE.MeshBasicMaterial({ color: 0x0b1526 });
+    for (let i = 0; i < 4; i++) {
+      const az = SEA_AZ + (rng() - 0.5) * 1.7;
+      const d = 85 + rng() * 45;
+      const h = 4 + rng() * 7, w = h * (2.2 + rng() * 1.6);
+      const m = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 12), islandMat);
+      m.scale.set(w, h, w * 0.7);
+      m.position.set(Math.cos(az) * d, WATER_Y - h * 0.35, Math.sin(az) * d);
+      m.rotation.y = rng() * 3;
+      beachEnv.add(m);
+    }
+    const capeMat = new THREE.MeshBasicMaterial({ color: 0x0c1322 });
+    for (let i = 0; i < 7; i++) {
+      const az = SEA_AZ + Math.PI + (rng() - 0.5) * 2.4;
+      const d = 55 + rng() * 30;
+      const h = 8 + rng() * 12, w = h * (1.1 + rng() * 0.9);
+      const m = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 12), capeMat);
+      m.scale.set(w, h, w * 0.7);
+      m.position.set(Math.cos(az) * d, -h * 0.25, Math.sin(az) * d);
+      m.rotation.y = rng() * 3;
+      beachEnv.add(m);
+    }
+  }
+}
+
+// —— 棕榈树：弯曲树干 + 羽状下垂叶冠，站在视野走廊两侧不挡海 ——
+// 叶片：沿长度先扬后垂的抛物线弧 + 叶缘锯齿收窄（羽叶剪影）
+function makePalmLeaf(len, wid, droop, mat) {
+  const geo = new THREE.PlaneGeometry(len, wid, 12, 1);
+  geo.translate(len / 2, 0, 0);                         // 叶根移到原点，便于绕树顶旋转
+  const p = geo.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const u = p.getX(i) / len;                          // 0 叶根 → 1 叶尖
+    const w = p.getY(i);
+    p.setZ(i, w * (1 - 0.82 * u) * (0.72 + 0.45 * Math.abs(Math.sin(u * 26))));  // 宽度转到 z：收窄 + 锯齿
+    p.setY(i, len * (0.3 * u - 0.55 * droop * u * u));  // 先扬后垂
+  }
+  geo.computeVertexNormals();
+  return new THREE.Mesh(geo, mat);
+}
+const palmTrunkMat = new THREE.MeshStandardMaterial({ color: 0x4a3826, roughness: 1 });
+const palmLeafMats = [0x14301d, 0x0f2617, 0x1a3a22].map(c =>
+  new THREE.MeshStandardMaterial({ color: c, roughness: 0.95, side: THREE.DoubleSide }));
+function makePalm(x, z, s) {
+  const g = new THREE.Group();
+  const h = (2.6 + Math.random() * 1.2) * s;
+  const leanA = Math.random() * Math.PI * 2;
+  const lean = 0.5 + Math.random() * 0.5;               // 顶部横向偏移（米）
+  const lx = Math.cos(leanA) * lean, lz = Math.sin(leanA) * lean;
+  const trunk = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3([
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(lx * 0.15, h * 0.4, lz * 0.15),
+    new THREE.Vector3(lx * 0.55, h * 0.78, lz * 0.55),
+    new THREE.Vector3(lx, h, lz)
+  ]), 10, 0.09 * s, 7), palmTrunkMat);
+  trunk.castShadow = true;
+  g.add(trunk);
+  const nLeaf = 8 + (Math.random() * 3 | 0);
+  for (let i = 0; i < nLeaf; i++) {
+    const leaf = makePalmLeaf((1.5 + Math.random() * 0.6) * s, 0.4 * s,
+      0.8 + Math.random() * 0.7, palmLeafMats[(Math.random() * 3) | 0]);
+    leaf.position.set(lx, h, lz);
+    leaf.rotation.y = (i / nLeaf) * Math.PI * 2 + Math.random() * 0.5;
+    leaf.castShadow = true;
+    g.add(leaf);
+  }
+  const nutMat = new THREE.MeshStandardMaterial({ color: 0x3d2c17, roughness: 0.9 });
+  for (let i = 0; i < 2; i++) {                         // 椰子
+    const nut = new THREE.Mesh(new THREE.SphereGeometry(0.085 * s, 8, 6), nutMat);
+    const na = Math.random() * Math.PI * 2;
+    nut.position.set(lx + Math.cos(na) * 0.12 * s, h - 0.12 * s, lz + Math.sin(na) * 0.12 * s);
+    nut.castShadow = true;
+    g.add(nut);
+  }
+  g.position.set(x, beachHeight(x, z) - 0.02, z);
+  beachEnv.add(g);
+  // 加入树摇系统：棕榈摆幅比松树略大
+  trees.push({ g, ph: Math.random() * 6.28, sp: 0.4 + Math.random() * 0.4, amp: 0.016 + Math.random() * 0.014 });
+}
+{
+  const rng = mulberry32(17);
+  // [方位偏移, 距离]：走廊两侧近岸各两棵，营地背后再补两棵
+  for (const [da, r] of [[0.85, 7.5], [-0.9, 8.5], [1.5, 10.5], [-1.6, 11], [2.5, 9], [-2.6, 8.5]]) {
+    const az = SEA_AZ + da;
+    makePalm(Math.cos(az) * r, Math.sin(az) * r, 0.85 + rng() * 0.5);
+  }
+}
+
+// 海面动画：碎光明灭漂移、泡沫冲滩退回、涌浪亮带推进（云厚时同步变暗）
+function updateOcean(t) {
+  if (!beachEnv.visible) return;
+  const dim = 1 - 0.6 * cloudNow;
+  for (const g of oceanGlints) {
+    const s = Math.max(0, Math.sin(t * g.sp + g.ph));
+    g.mesh.material.opacity = g.baseOp * s * s * dim;
+    g.mesh.position.x = g.x0 + Math.sin(t * 0.26 + g.ph) * 0.7;
+    g.mesh.position.z = g.z0 + Math.cos(t * 0.2 + g.ph * 1.7) * 0.8;
+  }
+  for (const f of shoreFoam) {
+    const p = (t / f.T + f.ph) % 1;
+    // 前 35% 快速涌上沙滩，其余时间缓慢退回海里
+    const run = p < 0.35 ? THREE.MathUtils.smoothstep(p / 0.35, 0, 1)
+                         : 1 - THREE.MathUtils.smoothstep((p - 0.35) / 0.65, 0, 1);
+    const lz = SHORE_S + f.dz + 1.7 - 3.1 * run;
+    const wx = SEA_DIR.z * f.mesh.position.x + SEA_DIR.x * lz;
+    const wz = -SEA_DIR.x * f.mesh.position.x + SEA_DIR.z * lz;
+    f.mesh.position.z = lz;
+    f.mesh.position.x = f.lx + Math.sin(t * 0.5 + f.ph * 6.28) * 0.6;
+    f.mesh.position.y = Math.max(beachHeight(wx, wz) + 0.05, WATER_Y + 0.04);
+    f.mesh.material.opacity = Math.pow(Math.sin(Math.PI * Math.min(1, p * 1.12)), 0.7) * 0.55 * dim;
+  }
+  for (const b of swellBands) {
+    const p = (t / b.T + b.ph) % 1;
+    b.mesh.position.z = b.z0 + 20 * (1 - p);            // 由远海推向岸线
+    b.mesh.material.opacity = Math.sin(Math.PI * p) * 0.09 * dim;
+  }
+}
+
+/* ============================================================
    营地道具：帐篷、折叠椅、背包、灯具、炊具——围火布置，
    均投射阴影、被火光与提灯暖光照亮（避开朝湖/月的视野走廊）
    ============================================================ */
@@ -1056,7 +1426,11 @@ scene.add(campLight);
 function placeProp(group, az, r, faceIn = true) {
   group.position.set(Math.cos(az) * r, 0, Math.sin(az) * r);
   if (faceIn) group.rotation.y = Math.atan2(-Math.cos(az), -Math.sin(az));   // 正面（+Z）朝火堆
-  group.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  group.traverse(o => {
+    if (!o.isMesh) return;
+    o.castShadow = !o.userData.noCastShadow;
+    o.receiveShadow = true;
+  });
   scene.add(group);
   campProps.push(group);
 }
@@ -1137,10 +1511,13 @@ function makeTent() {
   );
   inner.position.set(0, 0, D / 2 - 0.28);
   g.add(inner);
-  // 帐内暖光：不投影的小点光，在门前地面漏出一小片光晕（收纳道具时随组隐藏）
+  // 帐内暖光：不投影的小点光，在门前地面漏出一小片光晕。
+  // 注意：不能随道具组显隐——光源数量变化会触发全场景着色器重编译（明显卡顿），
+  // 摆放后由 placeProp 调用方把它 attach 到场景根部，收纳时只把强度归零
   const innerGlow = new THREE.PointLight(0xffb26a, 0.9, 2.6, 2);
   innerGlow.position.set(0, 0.5, D / 2 - 0.3);
   g.add(innerGlow);
+  g.userData.innerGlow = innerGlow;
 
   // 门帘卷起横绑在门洞上沿（露营帐"卷门"开放），两侧系带垂下
   const rollLen = dw * 1.5;
@@ -1225,98 +1602,608 @@ function makeChair() {
   return g;
 }
 
-// 背包：矮胖软包身 + 前探翻盖 + 前袋 + 正面压缩带 + 贴背肩带 + 底部睡垫卷
-// （刻意压低、加宽并打破对称，避免"躯干+头+手臂"的诡异人形剪影）
+// 背包：参考三视图重建的高筒技术登山包。
+// +Z 为正面；先以包身、翻盖和加固底建立轮廓，细节按独立部件继续雕刻。
 function makeBackpack() {
   const g = new THREE.Group();
-  const m  = new THREE.MeshStandardMaterial({ color: 0x586a3c, roughness: 0.95 });   // 橄榄绿（提亮，夜里不至于全黑）
-  const m2 = new THREE.MeshStandardMaterial({ color: 0x3d4727, roughness: 0.95 });
-  const m3 = new THREE.MeshStandardMaterial({ color: 0x262b12, roughness: 0.9 });    // 带/绳/扣
-  // 主体：圆角软包（略高于宽，背面较平）
-  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.17, 0.2, 8, 16), m);
-  body.scale.set(1.0, 1.0, 0.6); body.position.set(0, 0.3, 0); g.add(body);
-  // 顶盖：贴合顶部的小圆盖（不外伸成蘑菇沿）
-  const lid = new THREE.Mesh(new THREE.SphereGeometry(0.165, 18, 12), m);
-  lid.scale.set(1.0, 0.5, 0.64); lid.position.set(0, 0.5, 0.015); g.add(lid);
-  // 顶盖压带：单条从盖顶翻到正面（居中，避免"两眼"），末端一只带扣
-  const overStrap = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.24, 0.015), m3);
-  overStrap.position.set(0, 0.43, 0.135); overStrap.rotation.x = 0.2; g.add(overStrap);
-  const buckle = new THREE.Mesh(new THREE.BoxGeometry(0.058, 0.03, 0.024), m3);
-  buckle.position.set(0, 0.31, 0.16); g.add(buckle);
-  // 前袋：偏下的横向扁鼓袋（横置胶囊，不再是正圆"脸"）
-  const pocket = new THREE.Mesh(new THREE.CapsuleGeometry(0.058, 0.16, 6, 12), m2);
-  pocket.rotation.z = Math.PI / 2; pocket.scale.set(1, 1, 0.5); pocket.position.set(0, 0.17, 0.14); g.add(pocket);
-  // 两道横向束带（环身半圈，强化"包"的结构）
-  for (const sy of [0.24, 0.4]) {
-    const cinch = new THREE.Mesh(new THREE.TorusGeometry(0.172, 0.011, 6, 18, Math.PI * 1.3), m3);
-    cinch.scale.set(1, 1, 0.6); cinch.position.set(0, sy, 0); cinch.rotation.set(Math.PI / 2, 0, Math.PI * 0.85); g.add(cinch);
+  g.name = 'backpackRoot';
+
+  const makeFabricMaps = (base, seed, repeatX = 7, repeatY = 12) => {
+    const size = 64;
+    const canvases = Array.from({ length: 4 }, () => {
+      const c = document.createElement('canvas');
+      c.width = c.height = size;
+      return c;
+    });
+    const images = canvases.map(c => c.getContext('2d').createImageData(size, size));
+    const hash = (x, y, s) => {
+      let n = Math.imul(x + s * 37, 374761393) ^ Math.imul(y + s * 19, 668265263);
+      n = Math.imul(n ^ (n >>> 13), 1274126177);
+      return ((n ^ (n >>> 16)) >>> 0) / 4294967295;
+    };
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const i = (y * size + x) * 4;
+        const n = hash(x, y, seed);
+        const macro = Math.sin((x + seed * 11) * 0.12) * 0.022 + Math.cos((y - seed * 7) * 0.10) * 0.02;
+        const warp = ((x + y + seed) % 6 === 0 ? 1 : 0) - ((x - y + seed + 128) % 7 === 0 ? 0.55 : 0);
+        const shade = THREE.MathUtils.clamp(0.9 + macro + (n - 0.5) * 0.07 + warp * 0.025, 0.72, 1.08);
+        images[0].data[i] = base[0] * shade;
+        images[0].data[i + 1] = base[1] * shade;
+        images[0].data[i + 2] = base[2] * shade;
+        images[1].data[i] = images[1].data[i + 1] = images[1].data[i + 2] = 205 + n * 38 - warp * 8;
+        images[2].data[i] = images[2].data[i + 1] = images[2].data[i + 2] = 126 + warp * 28 + (n - 0.5) * 14;
+        images[3].data[i] = images[3].data[i + 1] = images[3].data[i + 2] = 238 - Math.abs(macro) * 120 - (1 - n) * 8;
+        for (const image of images) image.data[i + 3] = 255;
+      }
+    }
+    canvases.forEach((c, i) => c.getContext('2d').putImageData(images[i], 0, 0));
+    const textures = canvases.map(c => {
+      const tex = new THREE.CanvasTexture(c);
+      tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+      tex.repeat.set(repeatX, repeatY);
+      tex.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy());
+      return tex;
+    });
+    textures[0].colorSpace = THREE.SRGBColorSpace;
+    return { albedo: textures[0], roughness: textures[1], bump: textures[2], ao: textures[3] };
+  };
+
+  const canvasMaps = makeFabricMaps([82, 97, 58], 7);
+  const reinforcedMaps = makeFabricMaps([53, 65, 39], 19, 8, 13);
+  const webbingMaps = makeFabricMaps([37, 43, 25], 31, 10, 18);
+  const canvas = new THREE.MeshStandardMaterial({
+    color: 0xffffff, map: canvasMaps.albedo,
+    roughness: 0.9, roughnessMap: canvasMaps.roughness,
+    bumpMap: canvasMaps.bump, bumpScale: 0.018,
+    aoMap: canvasMaps.ao, aoMapIntensity: 0.45
+  });
+  const reinforced = new THREE.MeshStandardMaterial({
+    color: 0xffffff, map: reinforcedMaps.albedo,
+    roughness: 0.94, roughnessMap: reinforcedMaps.roughness,
+    bumpMap: reinforcedMaps.bump, bumpScale: 0.013,
+    aoMap: reinforcedMaps.ao, aoMapIntensity: 0.5
+  });
+  const webbing = new THREE.MeshStandardMaterial({
+    color: 0xffffff, map: webbingMaps.albedo,
+    roughness: 0.86, roughnessMap: webbingMaps.roughness,
+    bumpMap: webbingMaps.bump, bumpScale: 0.008,
+    aoMap: webbingMaps.ao, aoMapIntensity: 0.35
+  });
+  const cordMat = new THREE.MeshStandardMaterial({ color: 0x171a10, roughness: 0.82 });
+  const hardware = new THREE.MeshStandardMaterial({ color: 0x161a13, roughness: 0.56, metalness: 0.03 });
+  const seamMat = new THREE.MeshStandardMaterial({ color: 0x9a9d72, roughness: 0.92 });
+
+  const addStrapBetween = (name, a, b, width, depth, material, parent) => {
+    const direction = b.clone().sub(a);
+    const strap = new THREE.Mesh(new THREE.BoxGeometry(width, direction.length(), depth), material);
+    strap.name = name;
+    strap.position.copy(a).add(b).multiplyScalar(0.5);
+    strap.quaternion.setFromUnitVectors(UP_AXIS, direction.normalize());
+    parent.add(strap);
+    return strap;
+  };
+  const addCord = (name, points, parent, radius = 0.006, material = cordMat, radialSegments = 5) => {
+    const cord = new THREE.Mesh(
+      new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points), 12, radius, radialSegments, false),
+      material
+    );
+    cord.name = name;
+    parent.add(cord);
+    return cord;
+  };
+  const addBuckle = (name, position, scale, parent, faceBack = false) => {
+    const buckle = new THREE.Group();
+    buckle.name = name;
+    buckle.position.copy(position);
+    buckle.scale.setScalar(scale);
+    if (faceBack) buckle.rotation.y = Math.PI;
+    const frameShape = new THREE.Shape();
+    frameShape.moveTo(-0.028, -0.031);
+    frameShape.lineTo(0.028, -0.031);
+    frameShape.lineTo(0.028, 0.031);
+    frameShape.lineTo(-0.028, 0.031);
+    frameShape.closePath();
+    const frameHole = new THREE.Path();
+    frameHole.moveTo(-0.015, -0.019);
+    frameHole.lineTo(-0.015, 0.019);
+    frameHole.lineTo(0.015, 0.019);
+    frameHole.lineTo(0.015, -0.019);
+    frameHole.closePath();
+    frameShape.holes.push(frameHole);
+    const frameGeo = new THREE.ExtrudeGeometry(frameShape, {
+      depth: 0.012, bevelEnabled: true, bevelSegments: 1,
+      bevelSize: 0.0015, bevelThickness: 0.0015
+    });
+    frameGeo.translate(0, 0, -0.006);
+    const frame = new THREE.Mesh(frameGeo, hardware);
+    frame.name = `${name}Frame`;
+    buckle.add(frame);
+    const latch = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.036, 0.016), hardware);
+    latch.name = `${name}Latch`;
+    buckle.add(latch);
+    parent.add(buckle);
+    return buckle;
+  };
+
+  // 正面轮廓直接按三视图描成圆角挤出体，避免胶囊几何产生“太空舱”剪影。
+  const shellShape = new THREE.Shape();
+  shellShape.moveTo(-0.18, 0.025);
+  shellShape.lineTo(0.18, 0.025);
+  shellShape.quadraticCurveTo(0.225, 0.03, 0.235, 0.12);
+  shellShape.lineTo(0.235, 0.59);
+  shellShape.quadraticCurveTo(0.225, 0.675, 0.145, 0.69);
+  shellShape.quadraticCurveTo(0, 0.705, -0.145, 0.69);
+  shellShape.quadraticCurveTo(-0.225, 0.675, -0.235, 0.59);
+  shellShape.lineTo(-0.235, 0.12);
+  shellShape.quadraticCurveTo(-0.225, 0.03, -0.18, 0.025);
+  const shellGeo = new THREE.ExtrudeGeometry(shellShape, {
+    depth: 0.26, curveSegments: 8, bevelEnabled: true,
+    bevelSegments: 3, bevelSize: 0.018, bevelThickness: 0.018
+  });
+  shellGeo.translate(0, 0, -0.13);
+  shellGeo.computeVertexNormals();
+
+  const shellPivot = new THREE.Group();
+  shellPivot.name = 'packShell';
+  const shell = new THREE.Mesh(shellGeo, canvas);
+  shell.name = 'packShellMesh';
+  shellPivot.add(shell);
+  g.add(shellPivot);
+
+  // 宽翻盖比包身略向前探出，形成参考图清晰的上沿。
+  const lidPivot = new THREE.Group();
+  lidPivot.name = 'lidPivot';
+  const lidShape = new THREE.Shape();
+  lidShape.moveTo(-0.245, 0.70);
+  lidShape.quadraticCurveTo(0, 0.665, 0.245, 0.70);
+  lidShape.quadraticCurveTo(0.265, 0.72, 0.255, 0.78);
+  lidShape.quadraticCurveTo(0.24, 0.84, 0.155, 0.855);
+  lidShape.quadraticCurveTo(0, 0.875, -0.155, 0.855);
+  lidShape.quadraticCurveTo(-0.24, 0.84, -0.255, 0.78);
+  lidShape.quadraticCurveTo(-0.265, 0.72, -0.245, 0.70);
+  const lidGeo = new THREE.ExtrudeGeometry(lidShape, {
+    depth: 0.31, curveSegments: 8, bevelEnabled: true,
+    bevelSegments: 3, bevelSize: 0.014, bevelThickness: 0.014
+  });
+  lidGeo.translate(0, 0, -0.12);
+  const lid = new THREE.Mesh(lidGeo, reinforced);
+  lid.name = 'lidMesh';
+  lid.userData.noCastShadow = true;   // 与包身有软重叠，关闭投影避免低分辨率阴影锯齿
+  lidPivot.add(lid);
+  g.add(lidPivot);
+
+  // 加固底让模型落地，并与上方软质包身形成材质分区。
+  const baseShape = new THREE.Shape();
+  baseShape.moveTo(-0.19, 0.025);
+  baseShape.lineTo(0.19, 0.025);
+  baseShape.quadraticCurveTo(0.225, 0.04, 0.225, 0.11);
+  baseShape.lineTo(0.225, 0.16);
+  baseShape.lineTo(-0.225, 0.16);
+  baseShape.lineTo(-0.225, 0.11);
+  baseShape.quadraticCurveTo(-0.225, 0.04, -0.19, 0.025);
+  const baseGeo = new THREE.ExtrudeGeometry(baseShape, {
+    depth: 0.275, curveSegments: 6, bevelEnabled: true,
+    bevelSegments: 2, bevelSize: 0.01, bevelThickness: 0.01
+  });
+  baseGeo.translate(0, 0, -0.1375);
+  const base = new THREE.Mesh(baseGeo, reinforced);
+  base.name = 'reinforcedBase';
+  g.add(base);
+
+  // 正面系统：浅工具袋、两条外侧压缩带、翻盖短带、扣具和双 X 弹力绳。
+  const frontRig = new THREE.Group();
+  frontRig.name = 'frontLoadSystem';
+  g.add(frontRig);
+  const frontPanelShape = new THREE.Shape();
+  frontPanelShape.moveTo(-0.14, 0.225);
+  frontPanelShape.lineTo(0.14, 0.225);
+  frontPanelShape.quadraticCurveTo(0.155, 0.24, 0.15, 0.29);
+  frontPanelShape.lineTo(0.13, 0.50);
+  frontPanelShape.quadraticCurveTo(0, 0.535, -0.13, 0.50);
+  frontPanelShape.lineTo(-0.15, 0.29);
+  frontPanelShape.quadraticCurveTo(-0.155, 0.24, -0.14, 0.225);
+  const frontPanelGeo = new THREE.ExtrudeGeometry(frontPanelShape, {
+    depth: 0.025, curveSegments: 6, bevelEnabled: true,
+    bevelSegments: 2, bevelSize: 0.006, bevelThickness: 0.006
+  });
+  frontPanelGeo.translate(0, 0, 0.151);
+  const frontPanel = new THREE.Mesh(frontPanelGeo, reinforced);
+  frontPanel.name = 'frontUtilityPanel';
+  frontRig.add(frontPanel);
+
+  for (const sx of [-0.155, 0.155]) {
+    addStrapBetween(
+      `frontCompressionStrap${sx < 0 ? 'L' : 'R'}`,
+      new THREE.Vector3(sx, 0.205, 0.172), new THREE.Vector3(sx, 0.675, 0.172),
+      0.026, 0.012, webbing, frontRig
+    );
   }
-  // 贴背肩带：两条弯带（贴合主体、不外张成"手臂"）
-  for (const sx of [-0.06, 0.06]) {
-    const strap = new THREE.Mesh(new THREE.CapsuleGeometry(0.018, 0.22, 4, 8), m2);
-    strap.scale.set(1, 1, 0.5); strap.position.set(sx, 0.3, -0.1); strap.rotation.x = -0.06; g.add(strap);
+  for (const sx of [-0.105, 0.105]) {
+    addStrapBetween(
+      `lidStrap${sx < 0 ? 'L' : 'R'}`,
+      new THREE.Vector3(sx, 0.675, 0.202), new THREE.Vector3(sx, 0.555, 0.202),
+      0.025, 0.012, webbing, frontRig
+    );
+    addBuckle(
+      `frontBuckle${sx < 0 ? 'L' : 'R'}`,
+      new THREE.Vector3(sx, 0.54, 0.207), 0.78, frontRig
+    );
   }
-  // 顶部提环
-  const loop = new THREE.Mesh(new THREE.TorusGeometry(0.03, 0.01, 6, 12), m3);
-  loop.position.set(0, 0.56, -0.02); loop.rotation.x = Math.PI / 2; g.add(loop);
+
+  const laceRows = [0.46, 0.36, 0.255];
+  for (const y of laceRows) {
+    for (const sx of [-0.145, 0.145]) {
+      const anchor = new THREE.Mesh(new THREE.BoxGeometry(0.024, 0.016, 0.018), hardware);
+      anchor.name = `bungeeAnchor${sx < 0 ? 'L' : 'R'}${Math.round(y * 1000)}`;
+      anchor.position.set(sx, y, 0.19);
+      frontRig.add(anchor);
+    }
+  }
+  const F = (x, y) => new THREE.Vector3(x, y, 0.205);
+  addCord('bungeeUpperA', [F(-0.145, 0.46), F(0.145, 0.36)], frontRig);
+  addCord('bungeeUpperB', [F(0.145, 0.46), F(-0.145, 0.36)], frontRig);
+  addCord('bungeeLowerA', [F(-0.145, 0.36), F(0.145, 0.255)], frontRig);
+  addCord('bungeeLowerB', [F(0.145, 0.36), F(-0.145, 0.255)], frontRig);
+
+  // Raised piping and short stitch bars keep the fabric construction readable at camp scale.
+  const lidSeam = addCord('lidEdgePiping', [
+    new THREE.Vector3(-0.225, 0.705, 0.198),
+    new THREE.Vector3(0, 0.674, 0.198),
+    new THREE.Vector3(0.225, 0.705, 0.198)
+  ], frontRig, 0.0035, seamMat, 5);
+  lidSeam.userData.noCastShadow = true;
+
+  const frontSeamPoints = [
+    new THREE.Vector3(-0.135, 0.232, 0.185),
+    new THREE.Vector3(0.135, 0.232, 0.185),
+    new THREE.Vector3(0.148, 0.29, 0.185),
+    new THREE.Vector3(0.128, 0.495, 0.185),
+    new THREE.Vector3(0, 0.526, 0.185),
+    new THREE.Vector3(-0.128, 0.495, 0.185),
+    new THREE.Vector3(-0.148, 0.29, 0.185)
+  ];
+  const frontPanelSeam = new THREE.Mesh(
+    new THREE.TubeGeometry(
+      new THREE.CatmullRomCurve3(frontSeamPoints, true, 'centripetal'),
+      40, 0.0028, 5, true
+    ),
+    seamMat
+  );
+  frontPanelSeam.name = 'frontPanelPiping';
+  frontPanelSeam.userData.noCastShadow = true;
+  frontRig.add(frontPanelSeam);
+
+  const stitchGeo = new THREE.BoxGeometry(0.017, 0.003, 0.003);
+  const strapStitches = new THREE.InstancedMesh(stitchGeo, seamMat, 16);
+  strapStitches.name = 'compressionStrapStitches';
+  strapStitches.userData.noCastShadow = true;
+  const stitchMatrix = new THREE.Matrix4();
+  let stitchIndex = 0;
+  for (const sx of [-0.155, 0.155]) {
+    for (let row = 0; row < 8; row++) {
+      stitchMatrix.makeTranslation(sx, 0.235 + row * 0.057, 0.1805);
+      strapStitches.setMatrixAt(stitchIndex++, stitchMatrix);
+    }
+  }
+  frontRig.add(strapStitches);
+
+  // 左右侧袋和横向收紧带，扩大参考图下部的功能性剪影。
+  const pocketRig = new THREE.Group();
+  pocketRig.name = 'sidePocketSystem';
+  g.add(pocketRig);
+  const sidePocketShape = new THREE.Shape();
+  sidePocketShape.moveTo(-0.075, 0.075);
+  sidePocketShape.lineTo(0.075, 0.075);
+  sidePocketShape.quadraticCurveTo(0.092, 0.085, 0.092, 0.12);
+  sidePocketShape.lineTo(0.075, 0.33);
+  sidePocketShape.lineTo(-0.075, 0.33);
+  sidePocketShape.lineTo(-0.092, 0.12);
+  sidePocketShape.quadraticCurveTo(-0.092, 0.085, -0.075, 0.075);
+  const sidePocketGeo = new THREE.ExtrudeGeometry(sidePocketShape, {
+    depth: 0.06, curveSegments: 5, bevelEnabled: true,
+    bevelSegments: 2, bevelSize: 0.006, bevelThickness: 0.006
+  });
+  sidePocketGeo.translate(0, 0, -0.03);
+  for (const sx of [-1, 1]) {
+    const pocket = new THREE.Mesh(sidePocketGeo, reinforced);
+    pocket.name = `sidePocket${sx < 0 ? 'L' : 'R'}`;
+    pocket.rotation.y = sx * Math.PI / 2;
+    pocket.position.x = sx * 0.245;
+    pocketRig.add(pocket);
+    const sideStrap = new THREE.Mesh(new THREE.BoxGeometry(0.014, 0.028, 0.27), webbing);
+    sideStrap.name = `sideCompression${sx < 0 ? 'L' : 'R'}`;
+    sideStrap.position.set(sx * 0.235, 0.49, 0);
+    pocketRig.add(sideStrap);
+  }
+
+  // 背负系统：背垫、弧形肩带、胸带和宽腰带均独立成组。
+  const harnessRig = new THREE.Group();
+  harnessRig.name = 'rearHarnessSystem';
+  g.add(harnessRig);
+  const backPad = new THREE.Mesh(new THREE.CapsuleGeometry(0.072, 0.38, 6, 12), reinforced);
+  backPad.name = 'backPad';
+  backPad.scale.set(1.58, 1, 0.27);
+  backPad.position.set(0, 0.405, -0.151);
+  harnessRig.add(backPad);
+  for (const sx of [-1, 1]) {
+    addCord(`shoulderStrap${sx < 0 ? 'L' : 'R'}`, [
+      new THREE.Vector3(sx * 0.075, 0.71, -0.162),
+      new THREE.Vector3(sx * 0.155, 0.54, -0.205),
+      new THREE.Vector3(sx * 0.145, 0.32, -0.195),
+      new THREE.Vector3(sx * 0.112, 0.205, -0.16)
+    ], harnessRig, 0.024, webbing, 6);
+  }
+  addStrapBetween(
+    'sternumStrap', new THREE.Vector3(-0.145, 0.47, -0.21), new THREE.Vector3(0.145, 0.47, -0.21),
+    0.022, 0.011, webbing, harnessRig
+  );
+  addBuckle('sternumBuckle', new THREE.Vector3(0, 0.47, -0.219), 0.72, harnessRig, true);
+
+  const hipRig = new THREE.Group();
+  hipRig.name = 'hipBeltSystem';
+  g.add(hipRig);
+  for (const sx of [-1, 1]) {
+    const wing = new THREE.Mesh(new THREE.SphereGeometry(0.5, 14, 8), reinforced);
+    wing.name = `hipWing${sx < 0 ? 'L' : 'R'}`;
+    wing.scale.set(0.165, 0.062, 0.055);
+    wing.position.set(sx * 0.245, 0.14, -0.07);
+    wing.rotation.z = sx * -0.18;
+    hipRig.add(wing);
+  }
+  addStrapBetween(
+    'waistStrap', new THREE.Vector3(-0.23, 0.13, -0.145), new THREE.Vector3(0.23, 0.13, -0.145),
+    0.027, 0.012, webbing, hipRig
+  );
+  addBuckle('waistBuckle', new THREE.Vector3(0, 0.13, -0.154), 0.92, hipRig, true);
+
+  // 顶部提手以曲线从两个缝合根部生长，保留清晰负空间。
+  const handleRig = new THREE.Group();
+  handleRig.name = 'topHandlePivot';
+  const handle = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3([
+    new THREE.Vector3(-0.085, 0.82, -0.045),
+    new THREE.Vector3(-0.065, 0.89, -0.045),
+    new THREE.Vector3(0, 0.91, -0.045),
+    new THREE.Vector3(0.065, 0.89, -0.045),
+    new THREE.Vector3(0.085, 0.82, -0.045)
+  ]), 20, 0.016, 6, false), webbing);
+  handle.name = 'topCarryHandle';
+  handleRig.add(handle);
+  g.add(handleRig);
+
+  const handleSocketL = new THREE.Object3D();
+  handleSocketL.name = 'handleSocketL';
+  handleSocketL.position.set(-0.085, 0.82, -0.045);
+  const handleSocketR = new THREE.Object3D();
+  handleSocketR.name = 'handleSocketR';
+  handleSocketR.position.set(0.085, 0.82, -0.045);
+  g.add(handleSocketL, handleSocketR);
+
+  lidPivot.userData.actionProfile = {
+    role: 'opening-lid', axis: [1, 0, 0], range: [0, -1.12], defaultValue: 0
+  };
+  handleRig.userData.actionProfile = {
+    role: 'carry-handle', axis: [1, 0, 0], range: [-0.18, 0.18], defaultValue: 0
+  };
+  harnessRig.userData.actionProfile = {
+    role: 'wearable-harness', anchor: 'packShell', detachable: true
+  };
+
+  // AO 使用第二套 UV；复制而不复用贴图通道，保持各 PBR 纹理独立。
+  g.traverse(o => {
+    if (!o.isMesh || !o.geometry.attributes.uv || o.geometry.attributes.uv2) return;
+    o.geometry.setAttribute('uv2', new THREE.BufferAttribute(
+      new Float32Array(o.geometry.attributes.uv.array), 2
+    ));
+  });
+
+  g.userData.sculptRuntime = {
+    nodes: { root: g, packShell: shellPivot, lid: lidPivot, frontRig, pocketRig, harnessRig, hipRig, handleRig },
+    meshes: { shell, lid, base, frontPanel, frontPanelSeam, strapStitches, backPad, handle },
+    sockets: { handleSocketL, handleSocketR },
+    colliders: [{ id: 'backpack-body', type: 'box', size: [0.5, 0.86, 0.32], center: [0, 0.43, 0] }],
+    actions: {
+      openLid: { node: 'lidPivot', property: 'rotation.x', range: [0, -1.12] },
+      carry: { node: 'backpackRoot', sockets: ['handleSocketL', 'handleSocketR'] }
+    },
+    destructionGroups: {
+      shell: ['packShell', 'reinforcedBase'],
+      frontAttachments: ['frontLoadSystem', 'sidePocketSystem'],
+      harness: ['rearHarnessSystem', 'hipBeltSystem', 'topHandlePivot']
+    }
+  };
   return g;
 }
 
-// 提灯：立杆 + 挑臂吊起的煤油灯——通风锥顶、玻璃罩、护条罩笼、
-// 油壶底座、提梁吊环，发光灯芯在玻璃罩内（携带一盏暖色点光）
+// Classic ground-standing kerosene lantern reconstructed from front/side/back references.
 function makeLantern() {
   const g = new THREE.Group();
-  const metal = new THREE.MeshStandardMaterial({ color: 0x2a2a2e, roughness: 0.5, metalness: 0.6 });
-  const post = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.02, 0.72, 6), metal);
-  post.position.y = 0.36; g.add(post);
-  const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.2, 6), metal);
-  arm.position.set(0.09, 0.7, 0); arm.rotation.z = Math.PI / 2; g.add(arm);
-  const X = 0.18;                     // 灯体轴心（挑臂末端正下方）
-  // 吊环 + 半圆提梁
-  const hook = new THREE.Mesh(new THREE.TorusGeometry(0.016, 0.005, 6, 12), metal);
-  hook.position.set(X, 0.693, 0); g.add(hook);
-  const bail = new THREE.Mesh(new THREE.TorusGeometry(0.042, 0.006, 6, 16, Math.PI), metal);
-  bail.position.set(X, 0.652, 0); g.add(bail);
-  // 通风锥顶 + 顶部小烟囱
-  const chimney = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.02, 0.026, 8), metal);
-  chimney.position.set(X, 0.655, 0); g.add(chimney);
-  const cap = new THREE.Mesh(new THREE.ConeGeometry(0.072, 0.052, 10), metal);
-  cap.position.set(X, 0.632, 0); g.add(cap);
-  // 玻璃罩（半透明）+ 四根护条
-  const glass = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.052, 0.058, 0.096, 12, 1, true),
-    new THREE.MeshStandardMaterial({
-      color: 0xfff1cf, transparent: true, opacity: 0.16, roughness: 0.08,
-      depthWrite: false, side: THREE.DoubleSide
-    })
-  );
-  glass.position.set(X, 0.578, 0); g.add(glass);
-  for (let i = 0; i < 4; i++) {
-    const a = i / 4 * Math.PI * 2;
-    const rib = new THREE.Mesh(new THREE.CylinderGeometry(0.0038, 0.0038, 0.104, 5), metal);
-    rib.position.set(X + Math.cos(a) * 0.06, 0.578, Math.sin(a) * 0.06);
-    g.add(rib);
+  g.name = 'lanternRoot';
+  const steel = new THREE.MeshStandardMaterial({ color: 0x252a2c, roughness: 0.56, metalness: 0.64 });
+  const steelDark = new THREE.MeshStandardMaterial({ color: 0x111516, roughness: 0.72, metalness: 0.48 });
+  const brass = new THREE.MeshStandardMaterial({ color: 0xa87931, roughness: 0.4, metalness: 0.76 });
+  const glassMat = new THREE.MeshPhysicalMaterial({
+    color: 0xffe2ae, transparent: true, opacity: 0.22, transmission: 0.28,
+    thickness: 0.018, roughness: 0.08, metalness: 0,
+    depthWrite: false, side: THREE.DoubleSide
+  });
+
+  const lathe = (name, points, material, segments = 18) => {
+    const mesh = new THREE.Mesh(
+      new THREE.LatheGeometry(points.map(([r, y]) => new THREE.Vector2(r, y)), segments),
+      material
+    );
+    mesh.name = name;
+    g.add(mesh);
+    return mesh;
+  };
+  const tube = (name, points, radius, material, parent = g, tubularSegments = 28) => {
+    const mesh = new THREE.Mesh(
+      new THREE.TubeGeometry(
+        new THREE.CatmullRomCurve3(points.map(p => new THREE.Vector3(...p)), false, 'centripetal'),
+        tubularSegments, radius, 6, false
+      ),
+      material
+    );
+    mesh.name = name;
+    parent.add(mesh);
+    return mesh;
+  };
+
+  const tank = lathe('lanternFuelTank', [
+    [0, 0.012], [0.205, 0.012], [0.23, 0.025], [0.23, 0.045],
+    [0.205, 0.058], [0.2, 0.1], [0.185, 0.135], [0.145, 0.17],
+    [0.095, 0.185], [0, 0.185]
+  ], steel, 20);
+  lathe('lanternTankSeams', [
+    [0, 0.045], [0.215, 0.045], [0.218, 0.055], [0.205, 0.064], [0, 0.064]
+  ], steelDark, 20);
+  const baseRing = new THREE.Mesh(new THREE.TorusGeometry(0.218, 0.009, 6, 24), steelDark);
+  baseRing.name = 'lanternBaseRing';
+  baseRing.rotation.x = Math.PI / 2;
+  baseRing.position.y = 0.018;
+  g.add(baseRing);
+
+  lathe('lanternBurnerCollar', [
+    [0, 0.176], [0.1, 0.176], [0.115, 0.194], [0.112, 0.224],
+    [0.09, 0.238], [0.082, 0.255], [0, 0.255]
+  ], steel, 18);
+
+  const glass = new THREE.Mesh(new THREE.LatheGeometry([
+    new THREE.Vector2(0.09, 0.252), new THREE.Vector2(0.124, 0.275),
+    new THREE.Vector2(0.148, 0.335), new THREE.Vector2(0.152, 0.415),
+    new THREE.Vector2(0.135, 0.505), new THREE.Vector2(0.095, 0.565)
+  ], 24), glassMat);
+  glass.name = 'lanternGlassGlobe';
+  glass.renderOrder = 2;
+  glass.userData.noCastShadow = true;
+  g.add(glass);
+  for (const y of [0.255, 0.562]) {
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(y < 0.3 ? 0.093 : 0.098, 0.009, 6, 22), steelDark);
+    rim.name = y < 0.3 ? 'lanternLowerGlassRim' : 'lanternUpperGlassRim';
+    rim.rotation.x = Math.PI / 2;
+    rim.position.y = y;
+    g.add(rim);
   }
-  // 油壶底座：收腰圆壶 + 托盘
-  const tank = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.062, 0.05, 10), metal);
-  tank.position.set(X, 0.505, 0); g.add(tank);
-  const dish = new THREE.Mesh(new THREE.CylinderGeometry(0.066, 0.05, 0.014, 10), metal);
-  dish.position.set(X, 0.532, 0); g.add(dish);
-  // 灯芯
+
+  lathe('lanternVentStack', [
+    [0, 0.555], [0.1, 0.555], [0.115, 0.57], [0.118, 0.622],
+    [0.14, 0.636], [0.165, 0.646], [0.16, 0.664], [0.105, 0.674],
+    [0.09, 0.71], [0.06, 0.727], [0, 0.727]
+  ], steel, 20);
+  const ventHoleGeo = new THREE.SphereGeometry(0.011, 6, 4);
+  const ventHoles = new THREE.InstancedMesh(ventHoleGeo, steelDark, 10);
+  ventHoles.name = 'lanternVentHoles';
+  const ventMatrix = new THREE.Matrix4();
+  for (let i = 0; i < 10; i++) {
+    const a = i / 10 * Math.PI * 2;
+    ventMatrix.compose(
+      new THREE.Vector3(Math.cos(a) * 0.119, 0.601, Math.sin(a) * 0.119),
+      new THREE.Quaternion().setFromAxisAngle(UP_AXIS, -a),
+      new THREE.Vector3(0.55, 1, 0.35)
+    );
+    ventHoles.setMatrixAt(i, ventMatrix);
+  }
+  g.add(ventHoles);
+  const capPlate = new THREE.Mesh(new THREE.CylinderGeometry(0.145, 0.16, 0.018, 20), steel);
+  capPlate.name = 'lanternCapPlate';
+  capPlate.position.y = 0.676;
+  g.add(capPlate);
+  const liftRing = new THREE.Mesh(new THREE.TorusGeometry(0.035, 0.008, 6, 18), steelDark);
+  liftRing.name = 'lanternLiftRing';
+  liftRing.position.y = 0.756;
+  g.add(liftRing);
+
+  const frameRig = new THREE.Group();
+  frameRig.name = 'lanternFrameRig';
+  g.add(frameRig);
+  for (const sx of [-1, 1]) {
+    tube(`lanternSideFrame${sx < 0 ? 'L' : 'R'}`, [
+      [sx * 0.185, 0.105, 0], [sx * 0.245, 0.19, 0],
+      [sx * 0.255, 0.42, 0], [sx * 0.215, 0.595, 0], [sx * 0.145, 0.65, 0]
+    ], 0.014, steel, frameRig, 34);
+    const pivot = new THREE.Mesh(new THREE.TorusGeometry(0.025, 0.007, 6, 16), steelDark);
+    pivot.name = `lanternBailPivot${sx < 0 ? 'L' : 'R'}`;
+    pivot.position.set(sx * 0.25, 0.49, 0);
+    frameRig.add(pivot);
+  }
+
+  const bailPivot = new THREE.Group();
+  bailPivot.name = 'lanternBailPivot';
+  tube('lanternCarryBail', [
+    [-0.25, 0.49, 0], [-0.245, 0.72, 0], [-0.18, 0.855, 0],
+    [0, 0.9, 0], [0.18, 0.855, 0], [0.245, 0.72, 0], [0.25, 0.49, 0]
+  ], 0.009, steel, bailPivot, 44);
+  frameRig.add(bailPivot);
+
+  const cageRig = new THREE.Group();
+  cageRig.name = 'lanternGlobeCage';
+  for (const z of [-0.158, 0.158]) {
+    tube(`lanternGuardA${z < 0 ? 'Rear' : 'Front'}`, [
+      [-0.13, 0.285, z], [0, 0.39, z], [0.13, 0.5, z]
+    ], 0.0045, steelDark, cageRig, 18);
+    tube(`lanternGuardB${z < 0 ? 'Rear' : 'Front'}`, [
+      [0.13, 0.285, z], [0, 0.39, z], [-0.13, 0.5, z]
+    ], 0.0045, steelDark, cageRig, 18);
+  }
+  const rearSpine = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 0.47, 6), steelDark);
+  rearSpine.name = 'lanternRearSpine';
+  rearSpine.position.set(0, 0.42, -0.17);
+  cageRig.add(rearSpine);
+  g.add(cageRig);
+
+  const adjuster = new THREE.Group();
+  adjuster.name = 'lanternWickAdjuster';
+  adjuster.position.set(0, 0.16, 0.205);
+  const adjusterWheel = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.032, 0.018, 14), brass);
+  adjusterWheel.rotation.x = Math.PI / 2;
+  const adjusterLoop = new THREE.Mesh(new THREE.TorusGeometry(0.022, 0.005, 5, 14), brass);
+  adjusterLoop.position.z = 0.015;
+  adjuster.add(adjusterWheel, adjusterLoop);
+  g.add(adjuster);
+
+  const wick = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.014, 0.06, 8), steelDark);
+  wick.name = 'lanternWick';
+  wick.position.y = 0.315;
+  g.add(wick);
   const glowMat = new THREE.MeshStandardMaterial({
     color: 0xffd9a0, emissive: 0xffb259, emissiveIntensity: 2.4, roughness: 0.4
   });
-  const globe = new THREE.Mesh(new THREE.SphereGeometry(0.042, 12, 10), glowMat);
-  globe.position.set(X, 0.578, 0); g.add(globe);
+  const globe = new THREE.Group();
+  globe.name = 'lanternLightSocket';
+  globe.position.y = 0.375;
+  const flameOuter = new THREE.Mesh(new THREE.SphereGeometry(0.5, 12, 10), glowMat);
+  flameOuter.name = 'lanternFlameOuter';
+  flameOuter.scale.set(0.052, 0.105, 0.052);
+  flameOuter.userData.noCastShadow = true;
+  const flameInner = new THREE.Mesh(new THREE.SphereGeometry(0.5, 10, 8), glowMat);
+  flameInner.name = 'lanternFlameCore';
+  flameInner.scale.set(0.026, 0.058, 0.026);
+  flameInner.position.y = -0.016;
+  flameInner.userData.noCastShadow = true;
+  globe.add(flameOuter, flameInner);
+  g.add(globe);
   lanternGlowMat = glowMat;
+  g.userData.sculptRuntime = {
+    nodes: { root: g, frameRig, bailPivot, cageRig, adjuster },
+    sockets: { light: globe },
+    colliders: [{ id: 'lantern-body', type: 'capsule', center: [0, 0.4, 0], radius: 0.24, height: 0.82 }],
+    destructionGroups: { glass: ['lanternGlassGlobe'], metalFrame: ['lanternFrameRig', 'lanternGlobeCage'] }
+  };
   return { group: g, globe };
 }
 
+let tentGlow = null;   // 帐内暖光（挂在场景根部，收纳道具时仅归零强度，防止灯数变化触发重编译）
 {
-  placeProp(makeTent(), 2.30, 3.1, true);          // 帐篷：左后方
+  const tent = makeTent();
+  placeProp(tent, 2.30, 3.1, true);                // 帐篷：左后方
+  tent.updateMatrixWorld(true);
+  tentGlow = tent.userData.innerGlow;
+  scene.attach(tentGlow);                          // 保持世界位置不变，脱离道具组
   placeProp(makeChair(), 0.15, 1.95, true);        // 折叠椅：右侧，面向火
   placeProp(makeBackpack(), 0.62, 2.15, true);     // 背包：椅旁
   const lant = makeLantern();
+  lant.group.scale.setScalar(0.58);                // 约为背包高度的 58%，符合便携煤油灯比例
   placeProp(lant.group, 1.25, 2.5, true);          // 提灯：左侧前景
   lant.globe.getWorldPosition(campLight.position); // 点光对齐灯芯世界坐标
   campLight.intensity = 4.5;
@@ -1385,20 +2272,61 @@ const fireGroup = new THREE.Group();
 scene.add(fireGroup);
 const FIRE_POS = new THREE.Vector3(0, 0.55, 0);   // 火焰声学/光学中心
 
-// 石圈：更大更圆、紧密围合（参考图）
-// 石面用深色烟熏调：近火石块被强光直射，反照率偏浅在 ACES 映射下会过曝成白
+// PBR 贴图组（移植自 KettleCampfireSculptor：1024px albedo/roughness/normal/AO，
+// 参考图提取的实拍级石材与铸铁材质）；同名组只加载一次
+const PBR_TEXTURE_CACHE = {};
+function loadPbrTextures(name, repeat) {
+  if (PBR_TEXTURE_CACHE[name]) return PBR_TEXTURE_CACHE[name];
+  const loader = new THREE.TextureLoader();
+  const mk = (file, srgb) => {
+    const t = loader.load(`assets/textures/${name}/${file}.png`);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.repeat.set(repeat, repeat);
+    t.channel = 0;                        // aoMap 也走基础 UV
+    if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  };
+  return (PBR_TEXTURE_CACHE[name] = {
+    map: mk('albedo', true),
+    roughnessMap: mk('roughness'),
+    normalMap: mk('normal'),
+    aoMap: mk('ao')
+  });
+}
+
+// 石圈：更大更圆、紧密围合（参考图）——石块造型与 PBR 石材移植自 KettleCampfireSculptor：
+// 变形二十面体（宏观正弦起伏 + 中观颗粒）+ 实拍级贴图；面向火心一侧仍叠烟熏渐变
+// 色调保持偏深：近火石块被强光直射，反照率偏浅在 ACES 映射下会过曝成白
 {
   const rng = mulberry32(21);    // 布局随机流
   const crng = mulberry32(55);   // 颜色随机流（独立流，保证布局不变）
+  const stoneTex = loadPbrTextures('stone', 1.1);
   const n = 14;
   const v = new THREE.Vector3(), nrm = new THREE.Vector3();
   for (let i = 0; i < n; i++) {
     const a = (i / n) * Math.PI * 2 + (rng() - 0.5) * 0.18;
     const radius = (0.19 + rng() * 0.1) * 0.9;   // 位移平均外扩,基准略缩,总体量与旧版持平
-    const geo = makeRockGeometry(radius, i * 3.3 + 2, 0.2);
+    // 变形二十面体石块（KettleCampfireSculptor 的造型函数，缩放到营地尺度）；
+    // 焊接顶点 → 平滑法线（Icosahedron 原生非索引，直接重算法线会退化成棱面着色）
+    const geo = mergeVertices(new THREE.IcosahedronGeometry(radius, 2));
+    {
+      const pos = geo.attributes.position;
+      const seed = i + 1;
+      for (let j = 0; j < pos.count; j++) {
+        v.fromBufferAttribute(pos, j);
+        nrm.copy(v).normalize();
+        const macro = Math.sin(nrm.x * 4.1 + seed * 1.7)
+                    * Math.cos(nrm.y * 3.3 - seed * 0.9)
+                    * Math.sin(nrm.z * 3.7 + seed * 0.61);
+        const meso = Math.sin((nrm.x + nrm.z) * 10.5 + seed * 2.31);
+        v.multiplyScalar(1 + macro * 0.12 + meso * 0.028);
+        pos.setXYZ(j, v.x, v.y, v.z);
+      }
+    }
     // 随机翻滚烘进几何（而非 mesh.rotation），这样烟熏渐变能按最终朝向计算
     geo.applyMatrix4(new THREE.Matrix4().makeRotationFromEuler(
       new THREE.Euler(rng() * 3, rng() * 3, rng() * 3)));
+    geo.computeVertexNormals();
     // 烟熏渐变：面向火心（略偏上）的一侧被熏黑，叠噪声避免均匀渐变的塑料感
     const toFire = new THREE.Vector3(-Math.cos(a), 0.55, -Math.sin(a)).normalize();
     const pos = geo.attributes.position;
@@ -1413,10 +2341,15 @@ const FIRE_POS = new THREE.Vector3(0, 0.55, 0);   // 火焰声学/光学中心
     }
     geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
     const rockMat = new THREE.MeshStandardMaterial({
-      color: new THREE.Color().setHSL(0.075 + crng() * 0.03, 0.10 + crng() * 0.08, 0.16 + crng() * 0.08),
-      roughness: 0.94 + crng() * 0.06,
-      vertexColors: true,
-      flatShading: true       // 棱面岩感，避免噪声位移后的圆润"面团"观感
+      map: stoneTex.map,
+      roughnessMap: stoneTex.roughnessMap,
+      normalMap: stoneTex.normalMap,
+      aoMap: stoneTex.aoMap,
+      normalScale: new THREE.Vector2(0.55, 0.55),
+      aoMapIntensity: 0.78,
+      color: new THREE.Color().setHSL(0.075 + crng() * 0.03, 0.10 + crng() * 0.08, 0.26 + crng() * 0.08),
+      roughness: 0.92,
+      vertexColors: true
     });
     const rock = new THREE.Mesh(geo, rockMat);
     rock.position.set(Math.cos(a) * 0.98, 0.085, Math.sin(a) * 0.98);   // 略下沉，底部融进土里
@@ -2134,17 +3067,26 @@ function updateTreeSway(dt, t) {
    火把火焰：小型粒子焰（替代扁平贴图，有体积、跳动、随火把移动和风摆）
    粒子在世界空间从火把头发射 → 浮升 + 向发射柱收束 + 湍流抖动 + 随风倾斜
    ============================================================ */
-const TORCH_FLAME_N = 120;
-const torchFlameSys = makeParticleSystem(TORCH_FLAME_N, '0.05', THREE.AdditiveBlending);
+const TORCH_FLAME_N = 200;
+const torchFlameSys = makeParticleSystem(TORCH_FLAME_N, '0.04', THREE.AdditiveBlending);
 const torchParts = [];
 for (let i = 0; i < TORCH_FLAME_N; i++) {
-  torchParts.push({ life: 1, maxLife: 1, x: 0, y: -10, z: 0, cx: 0, cz: 0, vx: 0, vy: 0, vz: 0, seed: Math.random() * 100 });
+  // 双层焰体（同篝火的分层思路，缩到火把尺度）：
+  // 前 62% 为内焰核心（白黄、小而亮、贴轴心），其余为外焰焰膜（橙红、大而淡、升得高）
+  torchParts.push({
+    layer: i < TORCH_FLAME_N * 0.62 ? 0 : 1,
+    life: 1, maxLife: 1, x: 0, y: -10, z: 0, cx: 0, cz: 0, vx: 0, vy: 0, vz: 0,
+    seed: Math.random() * 100
+  });
   torchFlameSys.al[i] = 0;
 }
 torchFlameSys.g.attributes.aAlpha.needsUpdate = true;
-// 火把焰色带：白热核心 → 明黄 → 橙 → 暗红焰尖
-const TORCH_RAMP = [
-  [0.00, 1.00, 0.96, 0.74], [0.32, 1.00, 0.72, 0.24], [0.66, 1.00, 0.40, 0.07], [1.00, 0.55, 0.07, 0.01]
+// 内焰：白热核心 → 明黄 → 橙；外焰：橙 → 暗红焰尖
+const TORCH_RAMP_CORE = [
+  [0.00, 1.00, 0.98, 0.82], [0.30, 1.00, 0.86, 0.38], [0.70, 1.00, 0.55, 0.10], [1.00, 0.95, 0.28, 0.03]
+];
+const TORCH_RAMP_SHELL = [
+  [0.00, 1.00, 0.62, 0.16], [0.45, 1.00, 0.36, 0.05], [1.00, 0.42, 0.05, 0.01]
 ];
 const _tc = [0, 0, 0];
 // ign=引燃进度(0→1)，(ex,ey,ez)=火把头世界坐标（每帧由 updateTorch 传入）
@@ -2152,35 +3094,53 @@ function updateTorchFlame(dt, t, ign, ex, ey, ez) {
   const spawnable = ign > 0.02;
   for (let i = 0; i < TORCH_FLAME_N; i++) {
     const p = torchParts[i];
+    const shell = p.layer === 1;
     p.life += dt;
     if (p.life >= p.maxLife) {
       if (!spawnable) { torchFlameSys.al[i] = 0; continue; }
-      const a = Math.random() * Math.PI * 2, r = 0.088 * Math.sqrt(Math.random());  // 宽焰根，覆盖缠布顶（似在燃烧缠布）
+      const a = Math.random() * Math.PI * 2;
       p.cx = ex; p.cz = ez;                                          // 收束目标 = 火把轴心
-      p.x = ex + Math.cos(a) * r; p.y = ey + (Math.random() - 0.4) * 0.05; p.z = ez + Math.sin(a) * r;
-      p.vx = (Math.random() - 0.5) * 0.08;
-      p.vy = 0.24 + Math.random() * 0.34;                                  // 初速降低，焰根不立刻窜离
-      p.vz = (Math.random() - 0.5) * 0.08;
-      p.maxLife = 0.32 + Math.random() * 0.30;
+      if (Math.random() < (shell ? 0.55 : 0.3)) {
+        // 侧壁着火：火舌从缠布上半段的表面升起（整个上半头都在燃烧）
+        const r = 0.112 + Math.random() * 0.02;
+        p.x = ex + Math.cos(a) * r; p.y = ey - 0.19 + Math.random() * 0.17; p.z = ez + Math.sin(a) * r;
+      } else {
+        // 顶口火焰：焰根扎进缠布口内
+        const r = (shell ? 0.085 : 0.06) * Math.sqrt(Math.random());
+        p.x = ex + Math.cos(a) * r; p.y = ey - 0.05 + Math.random() * 0.06; p.z = ez + Math.sin(a) * r;
+      }
+      p.vx = (Math.random() - 0.5) * (shell ? 0.10 : 0.05);
+      p.vy = 0.15 + Math.random() * (shell ? 0.35 : 0.25);
+      p.vz = (Math.random() - 0.5) * (shell ? 0.10 : 0.05);
+      p.maxLife = shell ? 0.55 + Math.random() * 0.40 : 0.32 + Math.random() * 0.26;
       p.life = 0;
       p.seed = Math.random() * 100;
     }
     const f = p.life / p.maxLife;
-    p.vy += 2.3 * (1 - 0.45 * f) * dt;                              // 热浮升力
-    const k = Math.max(0, 1 - 1.7 * dt);                           // 空气阻力
+    // 热浮升：外焰升得更高；火光闪烁 flick 驱动整体高度不断呼吸
+    p.vy += (shell ? 3.4 : 2.8) * (1 - 0.4 * f) * (0.8 + 0.45 * flick) * dt;
+    const k = Math.max(0, 1 - 2.0 * dt);                           // 空气阻力
     p.vx *= k; p.vy *= k; p.vz *= k;
-    p.vx += Math.sin(t * 9 + p.seed * 1.7 + p.y * 5) * 0.55 * dt;  // 湍流
-    p.vz += Math.cos(t * 8 + p.seed * 2.3 + p.y * 5) * 0.55 * dt;
-    const conv = 1.0 + 5.5 * f;                                    // 焰根宽、随上升向轴心收束 → 窄焰尖
+    const turb = shell ? 0.9 : 0.45;                               // 湍流：外焰扭摆出焰舌
+    p.vx += Math.sin(t * 11 + p.seed * 1.7 + p.y * 14) * turb * dt;
+    p.vz += Math.cos(t * 9.3 + p.seed * 2.3 + p.y * 14) * turb * dt;
+    // 焰根宽 → 焰尖收束；低于缠布口时不向轴心收束（侧壁火舌贴着布面上舔，
+    // 越过口沿后才向焰尖聚拢）
+    const conv = (shell ? 2.2 : 4.5) * (0.5 + 1.6 * f)
+               * THREE.MathUtils.smoothstep((p.y - ey + 0.04) / 0.1, 0, 1);
     p.vx += (p.cx - p.x) * conv * dt;
     p.vz += (p.cz - p.z) * conv * dt;
-    p.vx += windVX * 1.4 * dt; p.vz += windVZ * 1.4 * dt;          // 随风倾斜
+    p.vx += windVX * 1.6 * dt; p.vz += windVZ * 1.6 * dt;          // 随风倾斜
     p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
     torchFlameSys.pos[i*3] = p.x; torchFlameSys.pos[i*3+1] = p.y; torchFlameSys.pos[i*3+2] = p.z;
-    flameColor(f, TORCH_RAMP, _tc);
+    flameColor(f, shell ? TORCH_RAMP_SHELL : TORCH_RAMP_CORE, _tc);
     torchFlameSys.col[i*3] = _tc[0]; torchFlameSys.col[i*3+1] = _tc[1]; torchFlameSys.col[i*3+2] = _tc[2];
-    torchFlameSys.sz[i] = (0.15 * (1 - 0.5 * f) + 0.035) * (0.6 + 0.4 * ign);
-    torchFlameSys.al[i] = Math.pow(Math.sin(Math.PI * Math.min(1, f * 1.12)), 0.7) * 0.95 * ign;
+    torchFlameSys.sz[i] = (shell ? 0.135 * (1 - 0.3 * f) + 0.03
+                                 : 0.088 * (1 - 0.5 * f) + 0.022) * (0.6 + 0.4 * ign);
+    // 透明度压低防止叠加饱和成"实心色块"（卡通感的根源）；外焰远低于内焰。
+    // 包络"出生即亮、缓慢燃尽"：焰根不再因渐入而半透明，火苗牢牢扎在缠布口上
+    const env = Math.min(1, f * 4.5) * Math.pow(1 - f, 0.85);
+    torchFlameSys.al[i] = env * (shell ? 0.16 : 0.5) * ign * (0.75 + 0.35 * flick);
   }
   torchFlameSys.g.attributes.position.needsUpdate = true;
   torchFlameSys.g.attributes.aColor.needsUpdate = true;
@@ -2427,54 +3387,83 @@ function updateMarshmallow(dt, t) {
   marshmallow.rotation.y = t * 1.65;
 }
 
-// 2) 水壶：铸铁壶坐于细金属四脚支架上、架在火焰上方加热，沸腾后壶嘴持续冒汽
+// 2) 水壶：移植自 KettleCampfireSculptor 的旧铁壶——车削壶身/壶肩/圈足/领口/壶盖，
+//    弧管壶嘴、提梁与炭黑握把、壶底烟熏带；铸铁 PBR 材质（albedo/roughness/normal/AO）
 const kettle = new THREE.Group();
+const ironTex = loadPbrTextures('iron', 1.35);
 const kettleMat = new THREE.MeshStandardMaterial({
-  color: 0x3d4650, metalness: 0.72, roughness: 0.32, emissive: 0x4a1804, emissiveIntensity: 0
+  map: ironTex.map, roughnessMap: ironTex.roughnessMap,
+  normalMap: ironTex.normalMap, aoMap: ironTex.aoMap,
+  normalScale: new THREE.Vector2(0.2, 0.2), aoMapIntensity: 0.62,
+  metalness: 0.72, roughness: 0.72,
+  emissive: 0x4a1804, emissiveIntensity: 0
 });
-// 壶身：车削轮廓（平底 → 鼓腹 → 收肩 → 壶口），坐于支架上
-const bodyProfile = [
-  [0.000, 0.000], [0.150, 0.000], [0.205, 0.035], [0.255, 0.105],
-  [0.276, 0.190], [0.270, 0.270], [0.240, 0.340], [0.198, 0.405],
-  [0.172, 0.445], [0.140, 0.452], [0.000, 0.452]
-].map(p => new THREE.Vector2(p[0], p[1]));
-const kettleBody = new THREE.Mesh(new THREE.LatheGeometry(bodyProfile, 26), kettleMat);
-kettleBody.castShadow = true;
-// 壶口圈
-const kettleRim = new THREE.Mesh(new THREE.TorusGeometry(0.158, 0.015, 8, 24), kettleMat);
-kettleRim.rotation.x = Math.PI / 2; kettleRim.position.y = 0.452;
-// 盖：低圆顶 + 顶钮
-const kettleLid = new THREE.Mesh(
-  new THREE.SphereGeometry(0.155, 22, 10, 0, Math.PI * 2, 0, Math.PI * 0.5), kettleMat);
-kettleLid.scale.y = 0.58; kettleLid.position.y = 0.452;
-const kettleKnob = new THREE.Mesh(new THREE.SphereGeometry(0.03, 12, 8), kettleMat);
-kettleKnob.position.y = 0.452 + 0.155 * 0.58 + 0.012;
-// 嘴：上扬锥管 + 外翻唇
-const kettleSpout = new THREE.Group();
-const kettleSpoutTube = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.085, 0.34, 12), kettleMat);
-kettleSpoutTube.position.y = 0.15;
-const kettleSpoutLip = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.038, 0.06, 12), kettleMat);
-kettleSpoutLip.position.y = 0.33; kettleSpoutLip.rotation.z = 0.28;
-kettleSpout.add(kettleSpoutTube, kettleSpoutLip);
-kettleSpout.position.set(0.2, 0.18, 0);
-kettleSpout.rotation.z = -0.92;
-// 提梁把手（bail）：竖直半环 + 横握把 + 两枚铆耳；与壶嘴垂直、拱过壶盖上方
-const bailMat = new THREE.MeshStandardMaterial({ color: 0x1b1e22, metalness: 0.5, roughness: 0.55 });
-const kettleBail = new THREE.Group();
-const bailArc = new THREE.Mesh(new THREE.TorusGeometry(0.205, 0.015, 7, 26, Math.PI), bailMat);
-bailArc.position.y = 0.36;
-const bailGrip = new THREE.Mesh(
-  new THREE.CylinderGeometry(0.022, 0.022, 0.12, 8),
-  new THREE.MeshStandardMaterial({ color: 0x141008, roughness: 0.95 }));
-bailGrip.position.set(0, 0.565, 0); bailGrip.rotation.z = Math.PI / 2;
-kettleBail.add(bailArc, bailGrip);
-for (const sx of [-1, 1]) {
-  const lug = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.04, 8), kettleMat);
-  lug.position.set(sx * 0.205, 0.36, 0); lug.rotation.z = Math.PI / 2;
-  kettleBail.add(lug);
+{
+  const S = 0.14;                                       // 原模型 → 营地尺度
+  const gripMat = new THREE.MeshStandardMaterial({ color: 0x141008, roughness: 0.95 });
+  const sootMat = new THREE.MeshStandardMaterial({
+    color: 0x090706, roughness: 0.98, transparent: true, opacity: 0.58, depthWrite: false
+  });
+  const lathe = (profile, segs = 48) => new THREE.Mesh(
+    new THREE.LatheGeometry(profile.map(p => new THREE.Vector2(p[0], p[1])), segs), kettleMat);
+  const inner = new THREE.Group();                      // 原模型局部坐标（壶底 y=-0.6）
+  // 壶身 + 壶肩（车削轮廓）
+  const body = lathe([
+    [0, -0.975], [1.52, -0.975], [1.78, -0.86], [1.94, -0.58],
+    [2.0, -0.1], [2.0, 0.46], [1.94, 0.72], [1.82, 0.975]
+  ]);
+  body.position.y = 0.375; body.castShadow = true; inner.add(body);
+  const shoulder = lathe([
+    [1.82, -0.5], [1.9, -0.36], [1.82, -0.08], [1.67, 0.18], [1.51, 0.4]
+  ]);
+  shoulder.position.y = 1.66; shoulder.castShadow = true; inner.add(shoulder);
+  // 圈足与领口
+  const baseRim = new THREE.Mesh(new THREE.TorusGeometry(1.93, 0.075, 10, 48), kettleMat);
+  baseRim.rotation.x = Math.PI / 2; baseRim.position.y = -0.58; inner.add(baseRim);
+  const neckRim = new THREE.Mesh(new THREE.TorusGeometry(1.5, 0.075, 10, 48), kettleMat);
+  neckRim.rotation.x = Math.PI / 2; neckRim.position.y = 1.93; inner.add(neckRim);
+  // 壶盖 + 盖钮（轮廓按 bottom→top 排列——反向会使 Lathe 法线朝内，
+  // 单面材质俯视时被背面剔除，看起来像"没有盖子"直接穿到火里）
+  const lid = lathe([
+    [1.6, -0.08], [1.52, 0.02], [1.22, 0.16], [0.82, 0.28], [0.34, 0.35], [0, 0.37]
+  ]);
+  lid.position.y = 1.98; lid.castShadow = true; inner.add(lid);
+  const knob = lathe([
+    [0, -0.14], [0.22, -0.14], [0.28, -0.03], [0.25, 0.12], [0.16, 0.2], [0, 0.2]
+  ], 32);
+  knob.position.y = 2.48; inner.add(knob);
+  // 壶嘴：弧管 + 炭黑嘴口
+  const spout = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3([
+    new THREE.Vector3(0, 0, 0), new THREE.Vector3(-0.48, 0.05, 0),
+    new THREE.Vector3(-0.86, 0.48, 0), new THREE.Vector3(-0.98, 1.09, 0)
+  ]), 36, 0.27, 10), kettleMat);
+  spout.position.set(-1.72, 0.54, 0); inner.add(spout);
+  const spoutMouth = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.215, 0.065, 20), gripMat);
+  spoutMouth.position.set(-2.7, 1.63, 0); spoutMouth.rotation.z = -0.86; inner.add(spoutMouth);
+  // 提梁：弧管拱过壶顶 + 横握把 + 两侧铰耳 + 侧支架
+  const bail = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3([
+    new THREE.Vector3(-1.78, 1.55, 0), new THREE.Vector3(-2.18, 3.3, 0),
+    new THREE.Vector3(-1.25, 4.15, 0), new THREE.Vector3(1.25, 4.15, 0),
+    new THREE.Vector3(2.18, 3.3, 0), new THREE.Vector3(1.78, 1.55, 0)
+  ]), 54, 0.09, 10), kettleMat);
+  bail.castShadow = true; inner.add(bail);
+  const grip = new THREE.Mesh(new THREE.CapsuleGeometry(0.16, 1.1, 5, 12), gripMat);
+  grip.position.set(0, 4.15, 0); grip.rotation.z = Math.PI / 2; inner.add(grip);
+  for (const sx of [-1, 1]) {
+    const hinge = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.18, 20), kettleMat);
+    hinge.position.set(sx * 1.81, 1.55, 0); hinge.rotation.z = Math.PI / 2; inner.add(hinge);
+  }
+  const bracket = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.36, 0.72), kettleMat);
+  bracket.position.set(1.89, 1.42, 0); inner.add(bracket);
+  // 壶底烟熏带：常年架在火上的黑圈
+  const sootBand = new THREE.Mesh(new THREE.TorusGeometry(1.89, 0.105, 12, 48), sootMat);
+  sootBand.rotation.x = Math.PI / 2; sootBand.position.y = -0.49; inner.add(sootBand);
+  inner.traverse(o => { if (o.isMesh) o.receiveShadow = true; });
+  inner.scale.setScalar(S);
+  inner.position.y = 0.6 * S;                           // 壶底落到组原点
+  inner.rotation.y = Math.PI;                           // 壶嘴朝 +X（蒸汽从这边冒出）
+  kettle.add(inner);
 }
-kettleBail.rotation.y = Math.PI / 2;
-kettle.add(kettleBody, kettleRim, kettleLid, kettleKnob, kettleSpout, kettleBail);
 const steamPuffs = [];
 for (let i = 0; i < 7; i++) {
   const puff = new THREE.Mesh(
@@ -2486,7 +3475,7 @@ for (let i = 0; i < 7; i++) {
 }
 kettle.visible = false;
 scene.add(kettle);
-const KETTLE_REST = new THREE.Vector3(0.04, 0.55, 0.02);   // 壶坐落在支架顶圈
+const KETTLE_REST = new THREE.Vector3(0.04, 0.59, 0.02);   // 壶底平面搭在支架顶圈上（圈顶 ≈ 0.588）
 const kettleRig = new THREE.Group();
 const standMat = new THREE.MeshStandardMaterial({ color: 0x17191d, metalness: 0.5, roughness: 0.55 });
 const standCx = 0.04, standCz = 0.02, ringY = 0.575, ringR = 0.19;
@@ -2525,8 +3514,8 @@ function updateSteam(t, strength) {
     const puff = steamPuffs[i];
     const phase = (t * (0.34 + i * 0.015) + i / steamPuffs.length) % 1;
     puff.position.set(
-      0.46 + Math.sin(t * 1.5 + i * 2.1) * 0.06 * phase,
-      0.42 + phase * 0.82,
+      0.38 + Math.sin(t * 1.5 + i * 2.1) * 0.06 * phase,   // 新壶嘴口约在 (0.38, 0.31)
+      0.31 + phase * 0.82,
       Math.cos(t * 1.2 + i) * 0.05 * phase
     );
     puff.scale.setScalar(0.55 + phase * 1.8);
@@ -2571,47 +3560,242 @@ function updateKettle(dt, t) {
 }
 
 // 3) 火把：伸入火焰引燃后回到石圈旁，可再次点击熄灭
-const torch = new THREE.Group();
-const torchWood = new THREE.Mesh(
-  new THREE.CylinderGeometry(0.043, 0.068, 1.08, 9),
-  new THREE.MeshStandardMaterial({ color: 0x593315, roughness: 0.96 })
-);
-torchWood.position.y = 0.54;
-torchWood.castShadow = true;
-const torchWrap = new THREE.Mesh(
-  new THREE.CylinderGeometry(0.105, 0.08, 0.27, 10),
-  new THREE.MeshStandardMaterial({ color: 0x26150d, roughness: 1 })
-);
-torchWrap.position.y = 1.12;
-torchWrap.castShadow = true;
-const torchBands = new THREE.Group();
-const torchBandMat = new THREE.MeshStandardMaterial({ color: 0x8d5d31, roughness: 1 });
-for (const y of [1.02, 1.1, 1.18]) {
-  const band = new THREE.Mesh(new THREE.TorusGeometry(0.092, 0.012, 6, 14), torchBandMat);
-  band.rotation.x = Math.PI / 2;
-  band.position.y = y;
-  torchBands.add(band);
+function makeTorchWoodMaps() {
+  const size = 64;
+  const canvases = Array.from({ length: 4 }, () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = size;
+    return canvas;
+  });
+  const [albedo, roughness, bump, ao] = canvases.map(canvas => canvas.getContext('2d'));
+  albedo.fillStyle = '#68411f'; albedo.fillRect(0, 0, size, size);
+  roughness.fillStyle = '#e7e7e7'; roughness.fillRect(0, 0, size, size);
+  bump.fillStyle = '#808080'; bump.fillRect(0, 0, size, size);
+  ao.fillStyle = '#f2f2f2'; ao.fillRect(0, 0, size, size);
+  let seed = 73;
+  const random = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 4294967296;
+  };
+  for (let i = 0; i < 22; i++) {
+    const x = random() * size;
+    const sway = (random() - 0.5) * 7;
+    const width = 0.35 + random() * 1.1;
+    for (const [ctx, color, scale] of [
+      [albedo, `rgba(32,17,7,${0.16 + random() * 0.18})`, 1],
+      [roughness, 'rgba(180,180,180,0.34)', 0.9],
+      [bump, i % 2 ? 'rgba(160,160,160,0.7)' : 'rgba(104,104,104,0.65)', 0.8],
+      [ao, 'rgba(205,205,205,0.24)', 1.1]
+    ]) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width * scale;
+      ctx.beginPath();
+      ctx.moveTo(x, -4);
+      ctx.bezierCurveTo(x + sway, size * 0.3, x - sway, size * 0.72, x + sway * 0.35, size + 4);
+      ctx.stroke();
+    }
+  }
+  for (let i = 0; i < 5; i++) {
+    const x = random() * size;
+    const y = random() * size;
+    albedo.strokeStyle = 'rgba(35,18,8,0.32)';
+    albedo.lineWidth = 1;
+    albedo.beginPath();
+    albedo.ellipse(x, y, 2.5 + random() * 2.5, 5 + random() * 4, 0, 0, Math.PI * 2);
+    albedo.stroke();
+  }
+  const textures = canvases.map(canvas => {
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set(2, 5);
+    texture.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy());
+    return texture;
+  });
+  textures[0].colorSpace = THREE.SRGBColorSpace;
+  return { albedo: textures[0], roughness: textures[1], bump: textures[2], ao: textures[3] };
 }
 
-const torchFlame = new THREE.Group();   // 仅承载柔光晕与点光源；焰体由世界空间粒子(torchFlameSys)绘制
-const torchGlow = new THREE.Sprite(
-  new THREE.SpriteMaterial({
+function makeTorchRibbonGeometry({ radius, y0, y1, turns, phase, width, segments = 52, wobble = 0.0025 }) {
+  const positions = [], normals = [], uvs = [], indices = [];
+  const dTheta = turns * Math.PI * 2;
+  const dY = y1 - y0;
+  const tangentCirc = radius * dTheta;
+  const invLength = 1 / Math.max(0.0001, Math.hypot(tangentCirc, dY));
+  const thetaOffset = (-dY * invLength * width * 0.5) / radius;
+  const yOffset = tangentCirc * invLength * width * 0.5;
+  for (let i = 0; i <= segments; i++) {
+    const t = i / segments;
+    const theta = phase + dTheta * t + Math.sin(t * Math.PI * 4 + phase) * 0.018;
+    const localRadius = radius + Math.sin(t * Math.PI * 6 + phase) * wobble;
+    const centerY = THREE.MathUtils.lerp(y0, y1, t);
+    for (const side of [-1, 1]) {
+      const edgeTheta = theta + thetaOffset * side;
+      const x = Math.cos(edgeTheta) * localRadius;
+      const z = Math.sin(edgeTheta) * localRadius;
+      positions.push(x, centerY + yOffset * side, z);
+      normals.push(Math.cos(edgeTheta), 0.08, Math.sin(edgeTheta));
+      uvs.push(t, side < 0 ? 0 : 1);
+    }
+  }
+  for (let i = 0; i < segments; i++) {
+    const a = i * 2, b = a + 1, c = a + 2, d = a + 3;
+    indices.push(a, c, b, b, c, d);
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setIndex(indices);
+  geometry.computeBoundingSphere();
+  return geometry;
+}
+
+function makeTorchModel() {
+  const torch = new THREE.Group();
+  torch.name = 'torchRoot';
+  const woodMaps = makeTorchWoodMaps();
+  const woodMat = new THREE.MeshStandardMaterial({
+    color: 0xffffff, map: woodMaps.albedo,
+    roughness: 0.94, roughnessMap: woodMaps.roughness,
+    bumpMap: woodMaps.bump, bumpScale: 0.025,
+    aoMap: woodMaps.ao, aoMapIntensity: 0.42
+  });
+  // 缠布上半段的燃烧余烬贴图：顶部炽热、向下渐熄、燃烧下缘参差
+  // （逐列随机高度的渐变 → 环向不均匀的烧蚀边界）；亮度由 updateTorch 按引燃进度驱动
+  const emberMap = (() => {
+    const cv = document.createElement('canvas'); cv.width = 64; cv.height = 64;
+    const g = cv.getContext('2d');
+    g.fillStyle = '#000'; g.fillRect(0, 0, 64, 64);
+    let seed = 91;
+    const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+    for (let x = 0; x < 64; x++) {
+      const h = 22 + rnd() * 16;               // 烧蚀边缘落在缠布上半段
+      const grad = g.createLinearGradient(0, 0, 0, h);
+      grad.addColorStop(0, 'rgba(255,255,255,1)');
+      grad.addColorStop(0.55, 'rgba(190,120,70,0.8)');
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = grad; g.fillRect(x, 0, 1, h);
+    }
+    const t = new THREE.CanvasTexture(cv);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.wrapS = THREE.RepeatWrapping;
+    return t;
+  })();
+  const clothCoreMat = new THREE.MeshStandardMaterial({
+    color: 0x5a3c2b, roughness: 1,
+    emissive: 0xff5a14, emissiveMap: emberMap, emissiveIntensity: 0
+  });
+  const clothRibbonMat = new THREE.MeshStandardMaterial({
+    color: 0x6b4933, roughness: 0.98, side: THREE.DoubleSide
+  });
+  const clothCuffMat = new THREE.MeshStandardMaterial({
+    color: 0x3f2a20, roughness: 1, side: THREE.DoubleSide
+  });
+  const sootMat = new THREE.MeshStandardMaterial({ color: 0x0d0907, roughness: 1 });
+
+  const shaftProfile = [
+    [0.052, 0.02], [0.06, 0.045], [0.058, 0.16], [0.053, 0.48],
+    [0.056, 0.76], [0.061, 0.99]
+  ].map(([r, y]) => new THREE.Vector2(r, y));
+  const torchWood = new THREE.Mesh(new THREE.LatheGeometry(shaftProfile, 14), woodMat);
+  torchWood.name = 'torchWoodShaft';
+  torchWood.castShadow = true;
+  const torchButt = new THREE.Mesh(new THREE.SphereGeometry(0.5, 12, 8), woodMat);
+  torchButt.name = 'torchRoundedButt';
+  torchButt.scale.set(0.059, 0.047, 0.059);
+  torchButt.position.y = 0.025;
+
+  const torchWrap = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.105, 0.096, 0.33, 16, 6),
+    clothCoreMat
+  );
+  torchWrap.name = 'torchClothCore';
+  torchWrap.position.y = 1.125;
+  torchWrap.castShadow = true;
+
+  const torchBands = new THREE.Group();
+  torchBands.name = 'torchClothRibbons';
+  const ribbonSpecs = [
+    { radius: 0.109, y0: 0.963, y1: 1.285, turns: 4.25, phase: 3.14, width: 0.034 },
+    { radius: 0.113, y0: 1.0, y1: 1.255, turns: -1.45, phase: 2.15, width: 0.032 },
+    { radius: 0.116, y0: 1.035, y1: 1.22, turns: 1.05, phase: 4.35, width: 0.029 },
+    { radius: 0.112, y0: 0.956, y1: 0.968, turns: 0.98, phase: 1.25, width: 0.032 },
+    { radius: 0.112, y0: 1.276, y1: 1.288, turns: 0.98, phase: 0.7, width: 0.032 }
+  ];
+  ribbonSpecs.forEach((spec, index) => {
+    const ribbon = new THREE.Mesh(
+      makeTorchRibbonGeometry(spec), index >= 3 ? clothCuffMat : clothRibbonMat
+    );
+    ribbon.name = `torchRibbon${index + 1}`;
+    ribbon.castShadow = true;
+    torchBands.add(ribbon);
+  });
+
+  const torchKnot = new THREE.Group();
+  torchKnot.name = 'torchSideKnot';
+  const knotBody = new THREE.Mesh(new THREE.SphereGeometry(0.5, 10, 7), clothRibbonMat);
+  knotBody.scale.set(0.038, 0.026, 0.025);
+  knotBody.position.set(0.105, 1.04, 0.055);
+  const tailShape = new THREE.Shape();
+  tailShape.moveTo(-0.018, 0);
+  tailShape.lineTo(0.018, 0);
+  tailShape.lineTo(0.014, -0.105);
+  tailShape.lineTo(0, -0.086);
+  tailShape.lineTo(-0.018, -0.11);
+  tailShape.closePath();
+  const tailGeometry = new THREE.ShapeGeometry(tailShape);
+  const knotTailA = new THREE.Mesh(tailGeometry, clothRibbonMat);
+  knotTailA.position.set(0.122, 1.025, 0.06);
+  knotTailA.rotation.z = -0.18;
+  const knotTailB = new THREE.Mesh(tailGeometry, clothRibbonMat);
+  knotTailB.position.set(0.09, 1.02, 0.052);
+  knotTailB.rotation.z = 0.35;
+  knotTailB.scale.set(0.82, 0.78, 1);
+  torchKnot.add(knotBody, knotTailA, knotTailB);
+
+  const torchCharredRim = new THREE.Mesh(new THREE.TorusGeometry(0.101, 0.012, 7, 22), sootMat);
+  torchCharredRim.name = 'torchCharredRim';
+  torchCharredRim.rotation.x = Math.PI / 2;
+  torchCharredRim.position.y = 1.292;
+
+  // 火焰本体由 torchFlameSys 粒子承担（双层焰体，见 updateTorchFlame）；
+  // 这里只保留柔和辉光与点光——此前的手绘火苗 Sprite 是卡通感的来源，已移除
+  const torchFlame = new THREE.Group();
+  torchFlame.name = 'torchFlameRig';
+  torchFlame.position.y = 1.292;
+  const torchGlow = new THREE.Sprite(new THREE.SpriteMaterial({
     map: radialTexture(64, [
-      [0, 'rgba(255,210,100,0.55)'], [0.45, 'rgba(255,100,25,0.2)'], [1, 'rgba(255,60,0,0)']
+      [0, 'rgba(255,220,120,0.45)'], [0.46, 'rgba(255,105,25,0.16)'], [1, 'rgba(255,60,0,0)']
     ]),
-    transparent: true,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-    opacity: 0.7
-  })
-);
-torchGlow.position.y = 1.28;
-torchGlow.scale.set(0.55, 0.48, 1);
-const torchLight = new THREE.PointLight(0xff7928, 0, 6, 2);
-torchLight.position.y = 1.35;
-torchFlame.add(torchGlow, torchLight);
-torch.add(torchWood, torchWrap, torchBands, torchFlame);
-scene.add(torch);
+    transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.58
+  }));
+  torchGlow.position.y = 0.23;
+  torchGlow.scale.set(0.48, 0.64, 1);
+  torchGlow.renderOrder = 4;
+  torchGlow.material.opacity = 0;              // 未点燃时全透明（不再切换 visible）
+  torchFlame.add(torchGlow);
+  // 点光不挂在火把下：挂到场景根部常驻可见（强度 0 即无光）。
+  // 光源显隐会改变灯数 → three.js 全场景着色器重编译，这正是"点燃时卡一下"的原因
+  const torchLight = new THREE.PointLight(0xff7928, 0, 6, 2);
+
+  torch.add(torchWood, torchButt, torchWrap, torchBands, torchKnot, torchCharredRim, torchFlame);
+  torch.traverse(o => {
+    if (!o.isMesh || !o.geometry.attributes.uv || o.geometry.attributes.uv2) return;
+    o.geometry.setAttribute('uv2', new THREE.BufferAttribute(new Float32Array(o.geometry.attributes.uv.array), 2));
+  });
+  torch.userData.sculptRuntime = {
+    nodes: { root: torch, flameRig: torchFlame, knot: torchKnot, ribbons: torchBands },
+    sockets: { flameEmitter: new THREE.Vector3(0, 1.292, 0) },
+    colliders: [{ id: 'torch-body', type: 'capsule', center: [0, 0.67, 0], radius: 0.11, height: 1.34 }],
+    destructionGroups: { shaft: ['torchWoodShaft'], fuelHead: ['torchClothCore', 'torchClothRibbons', 'torchSideKnot'] }
+  };
+  return { torch, torchFlame, torchGlow, torchLight, torchWrapMat: clothCoreMat };
+}
+
+const {
+  torch, torchFlame, torchGlow, torchLight, torchWrapMat
+} = makeTorchModel();
+scene.add(torch, torchLight);
 const _torchHead = new THREE.Vector3();   // 火把头世界坐标（粒子发射点）
 const torchAction = {
   state: 'unlit', time: 0, ign: 0,
@@ -2621,15 +3805,13 @@ const torchAction = {
   tilt: 1.16
 };
 torch.position.copy(torchAction.stand);
-torchFlame.visible = false;
 
 function toggleTorch() {
   if (campTidied) return;
   const a = torchAction;
   if (a.state === 'lit') {
     a.state = 'unlit';
-    a.ign = 0;                       // 粒子焰停止补充并燃尽
-    torchFlame.visible = false;
+    a.ign = 0;                       // 粒子焰停止补充并燃尽；辉光/点光由 ign 门控自动熄灭
     torchLight.intensity = 0;
     showActivityMessage('torchOff');
     return;
@@ -2653,7 +3835,6 @@ function updateTorch(dt, t) {
     a.ign = 0;
     // 燃烧端探入火焰后期开始引燃：火焰在火把仍探在火中时就微微燃起
     if (k >= 1) {
-      torchFlame.visible = true;
       a.state = 'returning';
       a.time = 0;
     }
@@ -2669,21 +3850,20 @@ function updateTorch(dt, t) {
       showActivityMessage('torchLit');
     }
   }
-  // 火把头世界坐标（缠布顶沿，粒子焰发射点）；粒子焰每帧推进，熄灭后自然燃尽
-  // 取 1.2 ≈ 缠布顶，让火焰扎根在火把头上而非悬浮其上
+  // Flame emission is rooted at the charred top rim of the wrapped head.
   torch.updateMatrixWorld(true);
-  _torchHead.set(0, 1.2, 0).applyMatrix4(torch.matrixWorld);
+  _torchHead.set(0, 1.292, 0).applyMatrix4(torch.matrixWorld);
   updateTorchFlame(dt, t, a.ign, _torchHead.x, _torchHead.y, _torchHead.z);
 
-  if (torchFlame.visible) {
-    const ign = a.ign;
-    // 柔光晕（halo）与点光源随引燃进度联动；焰体本身由粒子绘制
-    torchGlow.position.y = 1.28;
-    const gs = 0.5 * (0.45 + 0.55 * ign);
-    torchGlow.scale.set(gs, gs * 0.9, 1);
-    torchGlow.material.opacity = (0.42 + 0.14 * Math.sin(t * 12)) * ign;
-    torchLight.intensity = 5.5 * (0.82 + 0.25 * Math.sin(t * 14)) * ign;
-  }
+  // 辉光与点光随引燃进度 ign 门控、随火光闪烁呼吸（火焰本体是粒子，见 updateTorchFlame）
+  const ign = a.ign;
+  torchGlow.position.y = 0.23;
+  const gs = 0.44 * (0.48 + 0.52 * ign) * (0.9 + 0.2 * flick);
+  torchGlow.scale.set(gs, gs * 1.38, 1);
+  torchGlow.material.opacity = (0.34 + 0.09 * Math.sin(t * 12)) * ign;
+  torchLight.position.set(_torchHead.x, _torchHead.y + 0.18, _torchHead.z);   // 跟随火把头
+  torchLight.intensity = 5.5 * (0.72 + 0.2 * Math.sin(t * 14) + 0.3 * flick) * ign;
+  torchWrapMat.emissiveIntensity = (0.55 + 0.5 * flick) * ign;   // 缠布上半段的余烬随火光明灭
 }
 
 // 4) 松果：从镜头侧抛入，落入火堆后短暂燃烧并补充少量燃料
@@ -2969,6 +4149,7 @@ function tidyCampItems() {
 
   for (const prop of campProps) prop.visible = false;
   campLight.intensity = 0;
+  if (tentGlow) tentGlow.intensity = 0;
   if (lanternGlowMat) lanternGlowMat.emissiveIntensity = 0;
 
   marshmallowAction.state = 'idle';
@@ -2988,7 +4169,6 @@ function tidyCampItems() {
   torch.position.copy(torchAction.stand);
   torch.rotation.set(0, 0, 0);
   torch.visible = false;
-  torchFlame.visible = false;
   torchLight.intensity = 0;
 
   while (pinecones.length) disposeObject3D(pinecones.pop().group);
@@ -3014,6 +4194,7 @@ function placeCampItems() {
   campTidied = false;
 
   for (const prop of campProps) prop.visible = true;
+  if (tentGlow) tentGlow.intensity = 0.9;
   if (lanternGlowMat) lanternGlowMat.emissiveIntensity = 2.4;
   torch.visible = true;
   torch.position.copy(torchAction.stand);
@@ -3272,7 +4453,56 @@ function startAudio() {
     thunk.start();
   };
 
-  // 7) 远处动物：夜枭低鸣（双声 hoo-hoo）+ 偶发蟋蟀虫鸣
+  // 6.5) 海浪（海边场景）：定位声源在岸线附近——常鸣低涌 + 周期性破浪包络
+  //      森林场景下 waveMix 静音；切换场景时由 applyScene 渐变
+  const waveSound = new THREE.PositionalAudio(listener);
+  waveSound.position.set(SEA_DIR.x * 9.5, 0, SEA_DIR.z * 9.5);
+  waveSound.setRefDistance(5);
+  waveSound.setDistanceModel('inverse');
+  waveSound.setRolloffFactor(0.8);      // 岸线横向绵延，衰减比点源缓
+  waveSound.panner.panningModel = 'HRTF';
+  scene.add(waveSound);
+  const waveMix = ctx.createGain();
+  waveMix.gain.value = sceneMode === 'beach' ? 1 : 0;
+  waveSound.setNodeSource(waveMix);
+  // 常鸣海涌：棕噪声低鸣（远处浪群的背景声）
+  const surfSrc = ctx.createBufferSource();
+  surfSrc.buffer = makeNoiseBuffer(ctx, 9, true);
+  surfSrc.loop = true;
+  const surfLP = ctx.createBiquadFilter();
+  surfLP.type = 'lowpass'; surfLP.frequency.value = 320; surfLP.Q.value = 0.5;
+  const surfGain = ctx.createGain();
+  surfGain.gain.value = 0.18;
+  surfSrc.connect(surfLP).connect(surfGain).connect(waveMix);
+  surfSrc.start();
+  // 破浪：白噪声 + 低通扫频 + 涨-破-退包络，间隔随机
+  const swellSrc = ctx.createBufferSource();
+  swellSrc.buffer = makeNoiseBuffer(ctx, 7, false);
+  swellSrc.loop = true;
+  const swellLP = ctx.createBiquadFilter();
+  swellLP.type = 'lowpass'; swellLP.frequency.value = 420; swellLP.Q.value = 0.6;
+  const swellGain = ctx.createGain();
+  swellGain.gain.value = 0.0001;
+  swellSrc.connect(swellLP).connect(swellGain).connect(waveMix);
+  swellSrc.start();
+  let nextWave = ctx.currentTime + 1.5;
+  const waveTimer = setInterval(() => {
+    if (sceneMode !== 'beach') { nextWave = Math.max(nextWave, ctx.currentTime + 1.5); return; }
+    if (nextWave > ctx.currentTime + 0.5) return;
+    const t0 = Math.max(nextWave, ctx.currentTime + 0.05);
+    const big = Math.random() < 0.25;                   // 偶发大浪
+    const peak = (big ? 0.55 : 0.3) + Math.random() * 0.15;
+    swellGain.gain.setValueAtTime(0.0001, t0);
+    swellGain.gain.exponentialRampToValueAtTime(peak, t0 + 1.3 + Math.random() * 0.5);   // 浪头逼近
+    swellGain.gain.exponentialRampToValueAtTime(0.06, t0 + 3.4);                          // 破碎后退浪冲刷
+    swellGain.gain.exponentialRampToValueAtTime(0.0001, t0 + 4.6);
+    swellLP.frequency.setValueAtTime(420, t0);
+    swellLP.frequency.exponentialRampToValueAtTime(big ? 2600 : 1700, t0 + 1.6);          // 破碎时白花花的高频
+    swellLP.frequency.exponentialRampToValueAtTime(380, t0 + 4.5);
+    nextWave = t0 + 4.8 + Math.random() * 3.5;
+  }, 400);
+
+  // 7) 远处动物：夜枭低鸣（双声 hoo-hoo）+ 偶发蟋蟀虫鸣——仅森林场景
   //    非定位、随机稀疏触发；经听者主增益 → 受总音量控制
   const critterBus = ctx.createGain();
   critterBus.gain.value = 0.5;
@@ -3311,12 +4541,13 @@ function startAudio() {
     }
   };
   const critterTimer = setInterval(() => {             // 每 8s 掷骰 → 平均十几秒一声
+    if (sceneMode !== 'forest') return;                // 海边听不到林间夜枭与蟋蟀
     const r = Math.random();
     if (r < 0.4) playOwl();
     else if (r < 0.85) playCricket();
   }, 8000);
 
-  audio = { ctx, roarGain, airFilter, crackleTimer, critterTimer, windGain, playThud, playChop };
+  audio = { ctx, roarGain, airFilter, crackleTimer, critterTimer, windGain, playThud, playChop, waveMix, waveTimer };
 }
 
 /* ============================================================
@@ -3357,6 +4588,10 @@ const I18N = {
     chopDone: '咔嚓——木柴劈成了两半',
     campTidied: '营地物品已收好，只留下篝火',
     campPlaced: '帐篷、椅子、背包和提灯已重新摆放',
+    sceneForest: '🌲 森林',
+    sceneBeach: '🏖 海边',
+    sceneToBeach: '营地搬到了月光海滩——远处海浪阵阵',
+    sceneToForest: '回到了林间空地——虫鸣与夜枭声又近了',
     panelTitle: '⚙ 参数调节',
     gFlame: '火 焰', gSound: '声 音', gEnv: '环 境',
     fireScale: '火势',
@@ -3423,6 +4658,10 @@ const I18N = {
     chopDone: 'Crack — the log splits in two',
     campTidied: 'Camp items packed away; only the fire remains',
     campPlaced: 'The tent, chair, backpack, and lantern are set up again',
+    sceneForest: '🌲 Forest',
+    sceneBeach: '🏖 Beach',
+    sceneToBeach: 'Camp moves to a moonlit beach — waves rolling in the distance',
+    sceneToForest: 'Back at the forest clearing — crickets and owls return',
     panelTitle: '⚙ Parameters',
     gFlame: 'Flame', gSound: 'Sound', gEnv: 'Environment',
     fireScale: 'Fire intensity',
@@ -3489,6 +4728,10 @@ const I18N = {
     chopDone: 'パカッ——薪が二つに割れました',
     campTidied: 'キャンプ道具を片付け、焚き火だけを残しました',
     campPlaced: 'テント、椅子、バックパック、ランタンを再設置しました',
+    sceneForest: '🌲 森',
+    sceneBeach: '🏖 海辺',
+    sceneToBeach: '月明かりの浜辺にキャンプを移しました——遠くに波の音',
+    sceneToForest: '森の空き地に戻りました——虫の音とフクロウの声が近づきます',
     panelTitle: '⚙ パラメータ',
     gFlame: '炎', gSound: '音', gEnv: '環 境',
     fireScale: '火の勢い',
@@ -3583,6 +4826,28 @@ function applyLang(l) {
   }).catch(() => {});
 }
 for (const btn of langBtns) btn.addEventListener('click', () => applyLang(btn.dataset.lang));
+
+/* ============================================================
+   场景切换（森林 / 海边）：环境组显隐 + 夜色微调 + 声景渐变
+   ============================================================ */
+const sceneBtns = [...document.querySelectorAll('#sceneSwitch button')];
+const SCENE_BG = { forest: NIGHT, beach: 0x0a1424 };   // 海边夜色偏蓝一分
+function applyScene(mode, opts = {}) {
+  sceneMode = mode;
+  const beach = mode === 'beach';
+  forestEnv.visible = !beach;
+  beachEnv.visible = beach;
+  scene.background.setHex(SCENE_BG[mode]);
+  scene.fog.color.setHex(SCENE_BG[mode]);
+  for (const b of sceneBtns) b.classList.toggle('active', b.dataset.scene === mode);
+  if (audio) audio.waveMix.gain.setTargetAtTime(beach ? 1 : 0, audio.ctx.currentTime, 1.2);
+  if (!opts.silent) showActivityMessage(beach ? 'sceneToBeach' : 'sceneToForest', 3.5);
+}
+for (const btn of sceneBtns) btn.addEventListener('click', () => {
+  if (btn.dataset.scene !== sceneMode) applyScene(btn.dataset.scene);
+});
+bindText(sceneBtns[0], 'sceneForest');
+bindText(sceneBtns[1], 'sceneBeach');
 
 /* ============================================================
    启动遮罩
@@ -3685,6 +4950,7 @@ function step(dt, t) {
   updateMoths(dt, t);
   updateTreeSway(dt, t);
   updateLake(t);
+  updateOcean(t);
   updateCampActivities(dt, t);
   updateBirthday(dt, t);
 
@@ -4126,6 +5392,9 @@ function unlockBirthdaySettings() {
   const gear = $('bdayGear'); if (gear) gear.addEventListener('click', open);
 }
 
+// 启动前预编译全部材质（含当前隐藏的水壶/支架/蒸汽等）：
+// 首次点燃火把、煮水等交互不再因着色器即时编译而掉帧
+renderer.compile(scene, camera);
 animate();
 
 /* ============================================================
@@ -4219,7 +5488,7 @@ applyLang(lang);
 
 // 调试钩子：在 rAF 被节流的环境（如隐藏窗口）中手动驱动帧
 window.__campfire = {
-  renderer, scene, camera, step, P, applyLang, tossLog, activateBirthday,
+  renderer, scene, camera, step, P, applyLang, applyScene, tossLog, activateBirthday,
   startRoasting, startKettle, toggleTorch, throwPinecone, startChopping, tidyCampItems, placeCampItems,
   isCampTidied: () => campTidied,
   getFuel: () => ({ fuel, fuelTarget, fireHealth, fireDrive, collapseAmt }) };
