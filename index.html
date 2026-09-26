@@ -114,6 +114,17 @@
     grid-column: 1 / -1; width: 100%; height: 16px; margin: 0;
     accent-color: #ff8a3c; cursor: pointer;
   }
+  /* Blender 导出：模型下拉 + 导出按钮 */
+  .bl-row { display: flex; gap: 6px; margin: 8px 0 4px; }
+  .bl-row select, .bl-row button {
+    font: 12px var(--camp-ui-font); color: #e8dcc8; border-radius: 6px;
+    background: rgba(0,0,0,.35); border: 1px solid rgba(255,160,70,.3); padding: 4px 6px;
+  }
+  .bl-row select { flex: 1; min-width: 0; }
+  .bl-row button { cursor: pointer; color: #ffc890; white-space: nowrap; }
+  .bl-row button:hover:not(:disabled) { background: rgba(255,140,50,.18); }
+  .bl-row button:disabled { opacity: .5; cursor: default; }
+  .bl-note { font-size: 11px; color: #a89a84; line-height: 1.5; min-height: 1.5em; }
 
   #addLog {
     position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
@@ -429,15 +440,21 @@ import { mergeVertices, mergeGeometries } from 'three/addons/utils/BufferGeometr
 /* ============================================================
    基础场景
    ============================================================ */
-const NIGHT = 0x0a1020;
+// 夜空配色：天顶 / 地平线（= 雾色）。地平线比天顶略亮，远山剪影才读得出来
+const SKY = {
+  forest: { zenith: 0x03060d, horizon: 0x0f1828 },
+  beach:  { zenith: 0x04070f, horizon: 0x111d33 }
+};
 const UP_AXIS = new THREE.Vector3(0, 1, 0);   // 提前声明：makeChair→makeBeamBetween 在营地道具阶段就会用到
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(NIGHT);
-scene.fog = new THREE.FogExp2(NIGHT, 0.012);
+scene.background = new THREE.Color(SKY.forest.zenith);
+scene.fog = new THREE.FogExp2(SKY.forest.horizon, 0.012);
 
 // 场景分组：森林 / 海边二选一显示；篝火、营地道具、天空（星月云）两景共用
 const forestEnv = new THREE.Group();
 const beachEnv = new THREE.Group();
+forestEnv.name = 'ForestEnv';
+beachEnv.name = 'BeachEnv';
 beachEnv.visible = false;
 scene.add(forestEnv, beachEnv);
 let sceneMode = 'forest';   // 'forest' | 'beach'，由 applyScene 切换
@@ -494,7 +511,8 @@ function makeGroundTextures() {
   const bmp = document.createElement('canvas'); bmp.width = bmp.height = S;
   const gc = col.getContext('2d'), gb = bmp.getContext('2d');
   const rng = mulberry32(99);
-  gc.fillStyle = '#241a10'; gc.fillRect(0, 0, S, S);
+  // 底色略提亮：原 #241a10 线性反照率仅 ~1.5%，比煤还黑，月光/天光下远处地面整片死黑
+  gc.fillStyle = '#35281a'; gc.fillRect(0, 0, S, S);
   gb.fillStyle = '#7a7a7a'; gb.fillRect(0, 0, S, S);                 // 中灰 = 凹凸基准（平）
   // 大尺度土斑（柔和明暗块）——打破平铺感
   gc.filter = 'blur(26px)';
@@ -534,31 +552,44 @@ function makeGroundTextures() {
   };
   return { map: mk(col, true), bumpMap: mk(bmp, false) };
 }
-// 地形起伏：营地（r<4.5）与湖区保持平整，远处渐起缓丘；
+// 地形起伏：营地（r<4.5）与湖区保持平整；近处细小起伏，远处（r>22）渐起连绵林地缓坡，
+// 一直抬升到山脚。原先两层叠加正弦在大范围上呈明显周期条纹，改用梯度噪声 fBm。
 // 树木与散布物按同一函数落地，不悬浮不下陷
 function groundHeight(x, z) {
-  const ramp = THREE.MathUtils.smoothstep(Math.hypot(x, z), 4.5, 11);
+  const r = Math.hypot(x, z);
+  const ramp = THREE.MathUtils.smoothstep(r, 4.5, 11);
   const lakeFlat = THREE.MathUtils.smoothstep(Math.hypot(x + 24, z + 38), 29, 36);
-  return (0.35 * triNoise(x * 0.05, 0, z * 0.05, 3.7)
-        + 0.15 * triNoise(x * 0.13, 1, z * 0.13, 8.2)) * ramp * lakeFlat;
+  const near = 0.32 * fbm2(x * 0.06, z * 0.06, 3, 4) + 0.08 * gradNoise2(x * 0.24, z * 0.24, 8);
+  const far = THREE.MathUtils.smoothstep(r, 22, 62) * (0.6 + 1.1 * fbm2(x * 0.018, z * 0.018, 12, 3));
+  return (near + far) * ramp * lakeFlat;
+}
+// 地面网格外缘（r>70）下潜到山体环下方：两者在 r≈71 处交接，
+// 不再出现"方形地面到头、露出背景色"的断崖缝
+const TERRAIN_SIZE = 150, TERRAIN_DIP_R0 = 70, TERRAIN_DIP_R1 = 80;
+function terrainDip(x, z) {
+  return 5 * THREE.MathUtils.smoothstep(Math.hypot(x, z), TERRAIN_DIP_R0, TERRAIN_DIP_R1);
 }
 const groundTex = makeGroundTextures();
-const groundGeo = new THREE.PlaneGeometry(130, 130, 64, 64);
+groundTex.map.repeat.set(14, 14); groundTex.bumpMap.repeat.set(14, 14);   // 与旧版保持同样的纹素密度（≈10.7 m/重复）
+const groundGeo = new THREE.PlaneGeometry(TERRAIN_SIZE, TERRAIN_SIZE, 75, 75);
 {
   // 平面绕 X 轴旋转 -90° 后：局部 (x, y) → 世界 (x, -y)，局部 z 即世界高度
   const pos = groundGeo.attributes.position;
   for (let i = 0; i < pos.count; i++) {
-    pos.setZ(i, groundHeight(pos.getX(i), -pos.getY(i)));
+    const x = pos.getX(i), z = -pos.getY(i);
+    pos.setZ(i, groundHeight(x, z) - terrainDip(x, z));
   }
   groundGeo.computeVertexNormals();
 }
 const ground = new THREE.Mesh(
   groundGeo,
   new THREE.MeshStandardMaterial({
+    name: 'ForestSoil',
     map: groundTex.map, bumpMap: groundTex.bumpMap, bumpScale: 0.05,
     roughness: 0.97, metalness: 0.0
   })
 );
+ground.name = 'Terrain';
 ground.rotation.x = -Math.PI / 2;
 ground.receiveShadow = true;
 forestEnv.add(ground);
@@ -599,12 +630,20 @@ forestEnv.add(ground);
   g.fillStyle = m; g.fillRect(0, 0, S, S);
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace;
+  // 贴花外缘（r=5.2）已进入地形起伏区：顶点逐个贴合 groundHeight，
+  // 避免平面贴花边缘一半埋进土里、一半悬空（原先固定 y=0.012 的平圆会与缓坡相交闪烁）
+  const patchGeo = new THREE.CircleGeometry(5.2, 48);
+  {
+    const p = patchGeo.attributes.position;
+    for (let i = 0; i < p.count; i++) p.setZ(i, groundHeight(p.getX(i), -p.getY(i)) + 0.012);
+    patchGeo.computeVertexNormals();
+  }
   const patch = new THREE.Mesh(
-    new THREE.CircleGeometry(5.2, 48),
-    new THREE.MeshStandardMaterial({ map: tex, transparent: true, roughness: 1, depthWrite: false })
+    patchGeo,
+    new THREE.MeshStandardMaterial({ name: 'CampSoilDecal', map: tex, transparent: true, roughness: 1, depthWrite: false })
   );
+  patch.name = 'CampGroundPatch';
   patch.rotation.x = -Math.PI / 2;
-  patch.position.y = 0.012;
   patch.receiveShadow = true;
   forestEnv.add(patch);
 }
@@ -619,9 +658,10 @@ forestEnv.add(ground);
 
   const pebbles = new THREE.InstancedMesh(
     makeRockGeometry(1, 4.2, 0.34),
-    new THREE.MeshStandardMaterial({ color: 0x4d4336, roughness: 0.96, flatShading: true }),
+    new THREE.MeshStandardMaterial({ name: 'Pebble', color: 0x4d4336, roughness: 0.96, flatShading: true }),
     64
   );
+  pebbles.name = 'Pebbles';
   for (let i = 0; i < 64; i++) {
     const a = rng() * Math.PI * 2, r = 1.45 + 7.2 * Math.sqrt(rng());
     const x = Math.cos(a) * r, z = Math.sin(a) * r;
@@ -637,9 +677,10 @@ forestEnv.add(ground);
 
   const twigs = new THREE.InstancedMesh(
     makeLogGeometry(0.7, 1, 1, 6.1),
-    new THREE.MeshStandardMaterial({ color: 0x2e2013, roughness: 1 }),
+    new THREE.MeshStandardMaterial({ name: 'Twig', color: 0x2e2013, roughness: 1 }),
     30
   );
+  twigs.name = 'Twigs';
   dummy.rotation.set(0, 0, 0);
   for (let i = 0; i < 30; i++) {
     const a = rng() * Math.PI * 2, r = 1.6 + 6.8 * Math.sqrt(rng());
@@ -736,6 +777,7 @@ function radialTexture(size, stops) {
 // 月亮（参考图：默认视角左上方，带月晕和云）+ 微弱月光
 const moonDir = new THREE.Vector3(-0.86, 0.22, -0.46).normalize();
 let moonLight, moonMat, moonHalo, moonSide, moonTLit;   // 由天气系统在 step 里驱动月相/遮月
+let hemiLight, skyDome;                                  // 夜空天光 / 渐变天穹
 const clouds = [];                                       // 漂移云层（含基准位与速度）
 {
   const moonPos = moonDir.clone().multiplyScalar(330);
@@ -794,7 +836,8 @@ const clouds = [];                                       // 漂移云层（含�
       uniforms: {
         uMap: { value: moonTex },
         uSunDir: { value: sunDirW },
-        uDim: { value: 1 }                       // 云层遮月时整体压暗
+        uDim: { value: 1 },                      // 云层遮月时整体压暗
+        uAir: { value: new THREE.Color() }       // 月亮方向的天空底色（step 中与天穹同步）
       },
       vertexShader: /* glsl */`
         varying vec3 vNormal;
@@ -810,12 +853,18 @@ const clouds = [];                                       // 漂移云层（含�
         uniform sampler2D uMap;
         uniform vec3 uSunDir;
         uniform float uDim;
+        uniform vec3 uAir;
         void main() {
           float d = clamp(dot(normalize(vNormal), uSunDir), 0.0, 1.0);
-          float l = 0.06 + 2.1 * d;                // 0.06 ≈ 地照："新月抱旧月"的暗面微光
+          // 0.018 ≈ 地照："新月抱旧月"的暗面微光。原值 0.06 让暗面比夜空亮 7 倍，
+          // 月牙看起来像一块被照亮的灰色石球；地照应只是隐约可辨
+          float l = 0.018 + 2.1 * d;
           vec3 col = texture2D(uMap, vUv).rgb * l * uDim;
           gl_FragColor = vec4(col, 1.0);
           #include <tonemapping_fragment>
+          // 大气散射光位于观察者与月面之间：叠加月亮方向的天空色，
+          // 暗面至多与周围夜空一样暗，不会在月晕里抠出一个黑洞
+          gl_FragColor.rgb += uAir;
           #include <colorspace_fragment>
         }`
     })
@@ -871,10 +920,56 @@ const clouds = [];                                       // 漂移云层（含�
   }
 
   moonLight = new THREE.DirectionalLight(0x91a8d0, 0.12);   // 月牙的环境月光更弱
+  moonLight.name = 'MoonLight';
   moonLight.position.copy(moonDir).multiplyScalar(50);
   scene.add(moonLight);
 
-  scene.add(new THREE.HemisphereLight(0x202c44, 0x0a0c08, 0.22));
+  // 夜空天光（半球光）：原值 0x202c44 × 0.22 换算到线性空间后照度只有 ~0.005，
+  // 等于没有——火光照不到的地面、树、山全部死黑（"黑面"）。改为物理量级合理的
+  // 冷蓝天光，强度随月光滑块与云量在 step() 中联动
+  hemiLight = new THREE.HemisphereLight(0x8ea4d2, 0x2a2218, 0.36);
+  hemiLight.name = 'SkyLight';
+  scene.add(hemiLight);
+
+  // 天空穹顶：天顶深、地平线略亮的渐变 + 月亮方位的微弱辉光。
+  // 地平线色 = 雾色：远处地面/远山被雾融进地平线，不再与纯色背景之间出现硬边；
+  // 深色山体剪影也因此能从稍亮的地平线上读出来
+  skyDome = new THREE.Mesh(
+    new THREE.SphereGeometry(460, 32, 16),
+    new THREE.ShaderMaterial({
+      uniforms: {
+        uZenith: { value: new THREE.Color(SKY.forest.zenith) },
+        uHorizon: { value: new THREE.Color(SKY.forest.horizon) },
+        uGlow: { value: new THREE.Color(0x1a2a48) },
+        uMoonDir: { value: moonDir },
+        uGlowK: { value: 1 }
+      },
+      vertexShader: /* glsl */`
+        varying vec3 vDir;
+        void main() {
+          vDir = normalize(position);
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }`,
+      fragmentShader: /* glsl */`
+        varying vec3 vDir;
+        uniform vec3 uZenith, uHorizon, uGlow, uMoonDir;
+        uniform float uGlowK;
+        void main() {
+          vec3 d = normalize(vDir);
+          float h = clamp(d.y, 0.0, 1.0);
+          vec3 col = mix(uHorizon, uZenith, pow(h, 0.42));
+          float m = max(dot(d, uMoonDir), 0.0);
+          col += uGlow * (0.35 * pow(m, 6.0) + 0.5 * pow(m, 40.0)) * uGlowK;
+          gl_FragColor = vec4(col, 1.0);
+          #include <colorspace_fragment>
+        }`,
+      side: THREE.BackSide, depthWrite: false, fog: false
+    })
+  );
+  skyDome.name = 'SkyDome';
+  skyDome.userData.noExport = true;
+  skyDome.renderOrder = -10;
+  scene.add(skyDome);
 }
 
 // 设置月相：由相位角重算太阳方向 S = (月→地)·(-cosα) + 切向·sinα
@@ -885,39 +980,179 @@ function setMoonPhase(deg) {
     .addScaledVector(moonTLit, Math.sin(ph)).normalize();
 }
 
-// 远山剪影：宽缓的圆顶轮廓（压扁椭球，叠出柔和山脊，不再是尖锥）
-{
-  const rng = mulberry32(44);
-  const mat = new THREE.MeshBasicMaterial({ color: 0x0c1424 });
-  const moonAz = Math.atan2(moonDir.z, moonDir.x);
-  for (let i = 0; i < 20; i++) {
-    const a = Math.PI * 1.25 + (rng() - 0.5) * 2.8;
-    let vh = 20 + rng() * 26;                          // 峰高 20-46
-    // 月亮方位附近压低山体，避免挡月
-    const da = Math.abs(Math.atan2(Math.sin(a - moonAz), Math.cos(a - moonAz)));
-    if (da < 0.45) vh = Math.min(vh, 17);
-    const w = vh * (0.4 + rng() * 0.32);              // 宽 = 高的 40-72% → 恒比高窄（成峰，不成圆丘），又不过尖
-    // 噪声位移打碎光滑圆顶：山脊剪影起伏不规则（剪影材质，无需重算法线）
-    const geo = new THREE.SphereGeometry(1, 26, 14);
-    {
-      const p = geo.attributes.position;
-      const v = new THREE.Vector3();
-      for (let j = 0; j < p.count; j++) {
-        v.fromBufferAttribute(p, j);
-        const d = 1 + 0.16 * triNoise(v.x * 2.1, v.y * 1.6, v.z * 2.1, i * 5.3)
-                    + 0.06 * triNoise(v.x * 5.2, v.y * 4.0, v.z * 5.2, i * 5.3 + 7);
-        p.setXYZ(j, v.x * d, v.y * d, v.z * d);
-      }
+/* ============================================================
+   远山：环形山体高度场（旧版是 20 个噪声球体——近乎垂直的"墙"、
+   只占半圈地平线、底部悬在地面之外、MeshBasic 不受光，是明显的低质量建模）
+   新版：一整圈极坐标网格，内缘贴在地面网格下方无缝衔接，向外抬升为
+   脊状多重分形山脉；月亮/湖面方向压低成缓岭留出赏月视野，其余方向高峻带雪顶。
+   受月光/天光照明，顶点色区分林带、岩石、积雪，低坡散布针叶林剪影
+   ============================================================ */
+const MOON_AZ = Math.atan2(moonDir.z, moonDir.x);
+const LAKE_AZ = Math.atan2(-38, -24);                   // 默认视角正对湖面的方位
+
+// 通用环形地形网格：极坐标 (r, az) 栅格，径向由密到疏；heightFn / colorFn 决定形状与着色。
+// 顶点在接缝处共享（闭合环），法线平滑无缝
+function makeRingTerrain({ rIn, rOut, radial, angular, azFrom = -Math.PI, azTo = Math.PI, heightFn, colorFn }) {
+  const closed = Math.abs(azTo - azFrom - Math.PI * 2) < 1e-6;
+  const cols = closed ? angular : angular + 1;
+  const pos = new Float32Array((radial + 1) * cols * 3);
+  const uv = new Float32Array((radial + 1) * cols * 2);
+  for (let j = 0, k = 0; j <= radial; j++) {
+    const r = rIn + (rOut - rIn) * Math.pow(j / radial, 1.35);
+    for (let i = 0; i < cols; i++, k++) {
+      const az = azFrom + (azTo - azFrom) * i / angular;
+      const x = Math.cos(az) * r, z = Math.sin(az) * r;
+      pos[k * 3] = x; pos[k * 3 + 1] = heightFn(x, z); pos[k * 3 + 2] = z;
+      uv[k * 2] = x / 24; uv[k * 2 + 1] = z / 24;         // 平面投影 UV（Blender 中可直接铺材质）
     }
-    const m = new THREE.Mesh(geo, mat);
-    const d = 60 + rng() * 32;
-    m.scale.set(w, vh, w * (0.55 + rng() * 0.3));     // 窄高圆顶，深浅略变
-    m.position.set(Math.cos(a) * d, -vh * 0.2, Math.sin(a) * d);   // 略下沉，底融地平
-    m.rotation.y = rng() * Math.PI;
-    m.rotation.z = (rng() - 0.5) * 0.55;              // 都倾斜成脊、不对称更自然
-    forestEnv.add(m);
   }
+  const idx = [];
+  for (let j = 0; j < radial; j++) {
+    for (let i = 0; i < angular; i++) {
+      const i1 = closed ? (i + 1) % cols : i + 1;
+      const a = j * cols + i, b = j * cols + i1, c = (j + 1) * cols + i, d = (j + 1) * cols + i1;
+      idx.push(a, b, c, b, d, c);                        // 法线朝上
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  const col = new Float32Array(pos.length);
+  const nrm = geo.attributes.normal.array, c = [0, 0, 0];
+  for (let k = 0; k < pos.length; k += 3) {
+    colorFn(pos[k], pos[k + 1], pos[k + 2], nrm[k + 1], c);
+    col[k] = c[0]; col[k + 1] = c[1]; col[k + 2] = c[2];
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return geo;
 }
+
+// 远景材质：顶点色 + 随海拔变稀的雾（仍受雾滑块/雨量控制）。
+// 统一 FogExp2 在 100 m 外已把山体吞成背景色；按高度把雾密度降到 ~45%，
+// 高处山脊保留层次，山脚仍与近处林地一样融入夜雾
+function makeDistantMaterial(name) {
+  return applyDistantFog(new THREE.MeshStandardMaterial({ name, vertexColors: true, roughness: 0.96, metalness: 0 }));
+}
+function applyDistantFog(mat) {
+  mat.onBeforeCompile = sh => {
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <fog_pars_vertex>', '#include <fog_pars_vertex>\nvarying float vWorldY;')
+      .replace('#include <fog_vertex>', '#include <fog_vertex>\nvWorldY = (modelMatrix * vec4(transformed, 1.0)).y;');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <fog_pars_fragment>', '#include <fog_pars_fragment>\nvarying float vWorldY;')
+      .replace('#include <fog_fragment>', /* glsl */`
+        #ifdef USE_FOG
+          float fogD = fogDensity * mix(1.0, 0.45, smoothstep(2.0, 26.0, vWorldY));
+          float fogF = 1.0 - exp(-fogD * fogD * vFogDepth * vFogDepth);
+          gl_FragColor.rgb = mix(gl_FragColor.rgb, fogColor, fogF);
+        #endif`);
+  };
+  mat.customProgramCacheKey = () => 'distant-fog';
+  return mat;
+}
+
+// 远景针叶林剪影：两层小锥体合并成一个网格（一次 draw call），沿山脚/低坡散布，
+// 让山脊线呈现参差的林冠轮廓。positions: [[x, y, z, h], ...]
+function makeSilhouetteForest(positions, seed, palette) {
+  const rng = mulberry32(seed);
+  const parts = [];
+  const cone = (rad, h, y0) => {
+    const g = new THREE.ConeGeometry(rad, h, 6, 1, true);
+    g.translate(0, y0 + h / 2, 0);
+    return g;
+  };
+  for (const [x, y, z, h] of positions) {
+    const w = h * (0.26 + rng() * 0.1);
+    const g = mergeGeometries([cone(w, h * 0.72, 0), cone(w * 0.66, h * 0.55, h * 0.45)]);
+    g.rotateY(rng() * Math.PI);
+    g.translate(x, y - 0.4, z);
+    const n = g.attributes.position.count, col = new Float32Array(n * 3);
+    const k = 0.75 + rng() * 0.5;
+    const p = g.attributes.position;
+    for (let i = 0; i < n; i++) {
+      const up = (p.getY(i) - y) / h;                    // 树冠上部略亮（受天光）
+      col[i * 3] = palette[0] * k * (0.8 + 0.4 * up);
+      col[i * 3 + 1] = palette[1] * k * (0.8 + 0.4 * up);
+      col[i * 3 + 2] = palette[2] * k * (0.8 + 0.4 * up);
+    }
+    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    g.deleteAttribute('uv');
+    parts.push(g);
+  }
+  return mergeGeometries(parts);
+}
+
+const MTN_COLORS = {
+  soil:   [0.024, 0.019, 0.013],
+  forest: [0.012, 0.021, 0.014],
+  rock:   [0.070, 0.068, 0.066],
+  snow:   [0.46, 0.50, 0.56]
+};
+function mountainHeight(x, z) {
+  const S = THREE.MathUtils.smoothstep;
+  const r = Math.hypot(x, z), az = Math.atan2(z, x);
+  // 方位包络：月亮方向（略偏湖面一侧）为低缓远岭，离开这一走廊迅速抬升为主峰群
+  const open = 1 - S(Math.abs(angDiff(az, MOON_AZ + 0.12)), 0.2, 1.0);
+  const amp = THREE.MathUtils.lerp(58, 16, open)
+            * (0.78 + 0.4 * fbm2(Math.cos(az) * 1.6 + 7, Math.sin(az) * 1.6 - 3, 41, 3));
+  // 山脚起点：湖面方向后退，给湖面远岸（r≈72）留出平地
+  const r0 = 71 + 11 * (1 - S(Math.abs(angDiff(az, LAKE_AZ)), 0.15, 0.75));
+  const rise = S(r, r0 + 6, r0 + 70) * (1 - 0.3 * S(r, 175, 215));
+  const ridge = ridged2(x * 0.0105, z * 0.0105, 5, 6);
+  const foot = (2.5 + 5 * (0.5 + 0.5 * fbm2(x * 0.028, z * 0.028, 23, 4))) * S(r, r0, r0 + 22);
+  return groundHeight(x, z) - 0.28 + foot + amp * rise * (0.12 + 1.35 * ridge);
+}
+function mountainColor(x, y, z, ny, out) {
+  const S = THREE.MathUtils.smoothstep;
+  const n = fbm2(x * 0.045, z * 0.045, 77, 3);
+  const C = MTN_COLORS;
+  const rk = 0.7 + 0.55 * (0.5 + 0.5 * n);
+  let r = C.rock[0] * rk, g = C.rock[1] * rk, b = C.rock[2] * rk;
+  const treeline = 19 + 7 * n;
+  const fw = (1 - S(y, treeline - 6, treeline + 3)) * S(ny, 0.52, 0.78);
+  r += (C.forest[0] - r) * fw; g += (C.forest[1] - g) * fw; b += (C.forest[2] - b) * fw;
+  const sw = S(y + 8 * n, 33, 40) * S(ny, 0.42, 0.7);  // 雪只积在高处的缓坡上，陡崖露岩
+  r += (C.snow[0] - r) * sw; g += (C.snow[1] - g) * sw; b += (C.snow[2] - b) * sw;
+  const lw = 1 - S(y, 0.6, 3.5);                       // 山脚最低处与林地土色衔接
+  r += (C.soil[0] - r) * lw; g += (C.soil[1] - g) * lw; b += (C.soil[2] - b) * lw;
+  out[0] = r; out[1] = g; out[2] = b;
+}
+const mountains = new THREE.Group();
+mountains.name = 'Mountains';
+{
+  const mat = makeDistantMaterial('MountainTerrain');
+  const ring = new THREE.Mesh(makeRingTerrain({
+    rIn: 64, rOut: 215, radial: 72, angular: 360,
+    heightFn: mountainHeight, colorFn: mountainColor
+  }), mat);
+  ring.name = 'MountainRange';
+  mountains.add(ring);
+
+  // 山脚与低坡的林冠剪影：只长在林线以下、坡度不陡处
+  const rng = mulberry32(404);
+  const pts = [];
+  for (let tries = 0; tries < 9000 && pts.length < 1500; tries++) {
+    const az = rng() * Math.PI * 2 - Math.PI;
+    const r = 70 + Math.pow(rng(), 1.6) * 85;
+    const x = Math.cos(az) * r, z = Math.sin(az) * r;
+    const y = mountainHeight(x, z);
+    if (y < 0.8) continue;                              // 湖岸平地不种
+    const e = 1.5;
+    const sx = (mountainHeight(x + e, z) - mountainHeight(x - e, z)) / (2 * e);
+    const sz = (mountainHeight(x, z + e) - mountainHeight(x, z - e)) / (2 * e);
+    const ny = 1 / Math.hypot(sx, 1, sz);
+    const n = fbm2(x * 0.045, z * 0.045, 77, 3);
+    if (y > 17 + 7 * n || ny < 0.72) continue;
+    if (fbm2(x * 0.05, z * 0.05, 91, 3) < -0.15) continue;   // 林间空地，成片而不均匀
+    pts.push([x, y, z, 5 + rng() * 5]);
+  }
+  const belt = new THREE.Mesh(makeSilhouetteForest(pts, 405, MTN_COLORS.forest), mat);
+  belt.name = 'MountainForest';
+  mountains.add(belt);
+}
+forestEnv.add(mountains);
 
 // 月光下的湖面（带倒影光带和碎波）
 const lakeGlints = [];
@@ -940,12 +1175,14 @@ const lakeGlints = [];
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   const lakeGroup = new THREE.Group();
+  lakeGroup.name = 'Lake';
   lakeGroup.position.set(-24, 0.02, -38);
   lakeGroup.rotation.y = 1.08;            // 倒影光带朝向月亮方位
   const lake = new THREE.Mesh(
     new THREE.CircleGeometry(17, 48),
-    new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false })
+    new THREE.MeshBasicMaterial({ name: 'LakeSurface', map: tex, transparent: true, depthWrite: false })
   );
+  lake.name = 'LakeSurface';
   lake.rotation.x = -Math.PI / 2;
   lake.scale.set(1.6, 1.15, 1);
   lakeGroup.add(lake);
@@ -985,84 +1222,343 @@ function updateLake(t) {
   }
 }
 
-// 松树（收集引用，随风摇动 → 树影摆动）
-const trees = [];
-const trunkMat = new THREE.MeshStandardMaterial({ color: 0x241710, roughness: 1 });
-const leafMats = [0x0d2015, 0x0a1a11, 0x112619].map(c =>
-  new THREE.MeshStandardMaterial({ color: c, roughness: 1 }));
-// 针叶层：圆锥顶点加双频噪声位移，轮廓毛糙、层缘参差（消除"光滑圆锥"的占位感）
-// 噪声以周向角的 cos/sin 为输入 → 跨越 0/2π 接缝处连续
-function makeFoliageGeometry(r, h, seed) {
-  const geo = new THREE.ConeGeometry(r, h, 14, 5);
-  const pos = geo.attributes.position;
-  const v = new THREE.Vector3();
-  for (let i = 0; i < pos.count; i++) {
-    v.fromBufferAttribute(pos, i);
-    const rad = Math.hypot(v.x, v.z);
-    if (rad < 1e-4) continue;                       // 锥尖与底心不动
-    const k = rad / r;                              // 轴心 0 → 层缘 1
-    const ang = Math.atan2(v.z, v.x);
-    const d = 1 + (0.15 * triNoise(Math.cos(ang) * 2, v.y / h * 3, Math.sin(ang) * 2, seed)
-                 + 0.09 * triNoise(Math.cos(ang) * 6, v.y / h * 8, Math.sin(ang) * 6, seed + 5))
-                * (0.3 + 0.7 * k);
-    v.x *= d; v.z *= d;
-    v.y += 0.05 * h * k * triNoise(Math.cos(ang) * 3.3, k * 2, Math.sin(ang) * 3.3, seed + 11);   // 层缘垂坠参差
-    pos.setXYZ(i, v.x, v.y, v.z);
+/* ============================================================
+   针叶树（收集引用，随风摇动 → 树影摆动）
+   旧版是 5 个加噪声的圆锥叠成"圣诞树剪贴画"：层与层之间看不到树干、
+   轮廓对称、颜色近乎纯黑（线性反照率 ~1%），在夜色里只剩一块黑色纸板。
+   新版按真实针叶树结构建模：
+   · 树干：锥形、贯穿整个树冠、带板根外张与轻微弯曲，贴实拍树皮贴图；
+           下部残留枯枝桩（松树自然整枝的特征）
+   · 云杉 spruce：11~14 层轮生枝，每层由 6~9 个带尖梢的枝簇组成、外缘下垂、
+           长短不齐（缺枝），自下而上收窄成塔形
+   · 松 pine：高干，上部由枝条托起的若干针叶团簇组成不规则树冠
+   · 针叶顶点色：靠干处暗、枝梢亮、上层略亮 → 即使只有微弱天光也能看出体积
+   每棵树 = Group(Tree_*) ⊃ Trunk + Foliage 两个网格，Blender 中可逐棵选取编辑
+   ============================================================ */
+const trees = [];          // { g, ph, sp, amp, species, s }
+const barkTex = (() => {
+  const loader = new THREE.TextureLoader();
+  const mk = (file, srgb) => {
+    const t = loader.load(`assets/textures/bark/${file}.png`);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+    if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  };
+  return { map: mk('albedo', true), bumpMap: mk('bump'), roughnessMap: mk('roughness') };
+})();
+const trunkMat = new THREE.MeshStandardMaterial({
+  name: 'ConiferBark', map: barkTex.map, bumpMap: barkTex.bumpMap, bumpScale: 0.04,
+  roughnessMap: barkTex.roughnessMap, roughness: 1, color: 0xcfc4b8
+});
+const needleMat = new THREE.MeshStandardMaterial({
+  name: 'ConiferNeedles', vertexColors: true, roughness: 0.9, side: THREE.DoubleSide
+});
+const bushMat = new THREE.MeshStandardMaterial({
+  name: 'Undergrowth', color: new THREE.Color().setRGB(0.026, 0.042, 0.025), roughness: 0.95
+});
+
+// 树种参数（尺寸单位：米，对应 scale = 1；实际树高 = H × s）
+const TREE_SPECIES = {
+  spruce: {
+    H: 7.0, crownBase: 0.1, rMax: 0.23, tiers: [11, 14], lobes: [6, 9], droop: 1.0,
+    inner: [0.009, 0.019, 0.013], tip: [0.034, 0.062, 0.036]
+  },
+  pine: {
+    H: 8.0, crownBase: 0.48, branches: [10, 13],
+    inner: [0.012, 0.021, 0.012], tip: [0.052, 0.074, 0.034]
   }
-  geo.computeVertexNormals();
-  return geo;
+};
+
+// CylinderGeometry 的 UV 接缝处顶点成对重复：computeVertexNormals 只统计各自一侧的面，
+// 接缝会出现一条明暗线。这里把每行首尾两个重复顶点的法线取平均
+function weldSeamNormals(geo, radial, rows) {
+  const n = geo.attributes.normal;
+  for (let y = 0; y <= rows; y++) {
+    const a = y * (radial + 1), b = a + radial;
+    const x = n.getX(a) + n.getX(b), yy = n.getY(a) + n.getY(b), z = n.getZ(a) + n.getZ(b);
+    const l = Math.hypot(x, yy, z) || 1;
+    n.setXYZ(a, x / l, yy / l, z / l);
+    n.setXYZ(b, x / l, yy / l, z / l);
+  }
 }
-function makeTree(x, z, s) {
-  const tree = new THREE.Group();
-  const seed = Math.random() * 100;
-  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.11 * s, 0.2 * s, 1.4 * s, 8), trunkMat);
-  trunk.position.y = 0.7 * s;
-  trunk.rotation.z = (Math.random() - 0.5) * 0.06;   // 微倾，打破笔直
-  trunk.castShadow = true;
-  tree.add(trunk);
-  // 5 层大小交错、略偏斜的叶层，3 种深浅绿随机取用
-  const layers = 5;
-  for (let i = 0; i < layers; i++) {
-    const f = i / (layers - 1);
-    const r = (1.16 - 0.8 * f) * s * (0.9 + Math.random() * 0.2);
-    const h = (1.06 - 0.34 * f) * s;
-    const cone = new THREE.Mesh(makeFoliageGeometry(r, h, seed + i * 7), leafMats[(Math.random() * 3) | 0]);
-    cone.position.set((Math.random() - 0.5) * 0.16 * s, (1.02 + i * 0.6) * s, (Math.random() - 0.5) * 0.16 * s);
-    cone.rotation.set((Math.random() - 0.5) * 0.09, Math.random() * Math.PI * 2, (Math.random() - 0.5) * 0.09);
-    cone.castShadow = true;
-    cone.receiveShadow = true;
-    tree.add(cone);
+
+// 两点之间的锥形圆柱（枝条 / 枯枝桩），保留 UV 以共用树皮材质
+function makeLimbGeometry(a, b, r0, r1, radial = 5) {
+  const dir = new THREE.Vector3().subVectors(b, a);
+  const len = dir.length();
+  const g = new THREE.CylinderGeometry(r1, r0, len, radial, 1, true);
+  g.translate(0, len / 2, 0);
+  g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(UP_AXIS, dir.normalize()));
+  g.translate(a.x, a.y, a.z);
+  return g;
+}
+
+// 一层针叶：极坐标网格（K 圈 × A 段，首尾共享顶点无接缝）。
+// 外轮廓由 nb 个带尖梢的枝簇构成（每簇长度随机 → 缺枝、参差），外缘下垂，中心贴树干。
+// o: { cx, cy, cz, R, dh, droop, nb, phase, lobeAmp, dome, bright, sp, rng, A, K }
+function addNeedleTier(buf, o) {
+  const A = o.A, K = o.K;
+  const base = buf.pos.length / 3;
+  const lobeK = [];
+  for (let i = 0; i < o.nb; i++) lobeK.push(0.72 + o.rng() * 0.38);
+  const collar = Math.min(0.06 * o.R + 0.03, 0.2);
+  for (let k = 0; k <= K; k++) {
+    const u = k / K;
+    for (let a = 0; a < A; a++) {
+      const th = a / A * Math.PI * 2 + o.phase;
+      const lc = (a / A) * o.nb;
+      const li = Math.floor(lc) % o.nb, fr = lc - Math.floor(lc);
+      const shape = 1 - Math.pow(Math.abs(2 * fr - 1), 0.8);     // 枝梢尖、枝间 V 形缺口
+      const rr = o.R * lobeK[li] * (1 - o.lobeAmp + o.lobeAmp * shape);
+      const r = collar + (rr - collar) * u;
+      const y = o.cy + o.dh * (0.45 - 0.45 * u) + o.dome * o.dh * (1 - u * u)
+              - o.droop * u * u * (0.55 + 0.45 * shape)
+              + 0.12 * o.dh * u * triNoise(Math.cos(th) * 2.3, o.cy, Math.sin(th) * 2.3, o.seed);
+      buf.pos.push(o.cx + Math.cos(th) * r, y, o.cz + Math.sin(th) * r);
+      const w = Math.pow(u, 1.3) * (0.55 + 0.45 * shape);
+      for (let c = 0; c < 3; c++) buf.col.push((o.sp.inner[c] + (o.sp.tip[c] - o.sp.inner[c]) * w) * o.bright);
+    }
   }
+  for (let k = 0; k < K; k++) {
+    for (let a = 0; a < A; a++) {
+      const i0 = base + k * A + a, i1 = base + k * A + (a + 1) % A;
+      const i2 = base + (k + 1) * A + a, i3 = base + (k + 1) * A + (a + 1) % A;
+      buf.idx.push(i0, i1, i2, i1, i3, i2);              // 法线朝上（DoubleSide 背面自动翻转）
+    }
+  }
+}
+
+// 松针团簇：变形二十面体（上半球略扁、底部收平、表面尖刺状起伏），
+// 顶部与外凸处亮、底部暗——从下仰视也有体积，不会露出扁平"伞面"
+function addNeedleClump(buf, o) {
+  let g = new THREE.IcosahedronGeometry(1, o.detail);
+  g.deleteAttribute('normal'); g.deleteAttribute('uv');
+  g = mergeVertices(g);
+  const p = g.attributes.position, base = buf.pos.length / 3;
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+    const d = 1 + 0.22 * triNoise(x * 3.1, y * 3.1, z * 3.1, o.seed) + 0.18 * triNoise(x * 8.3, y * 8.3, z * 8.3, o.seed + 3);
+    const sy = y > 0 ? o.squash : 0.42;
+    buf.pos.push(o.cx + x * d * o.R, o.cy + y * sy * d * o.R, o.cz + z * d * o.R);
+    const w = Math.min(1, Math.max(0, 0.45 * (0.5 + 0.5 * y) + 1.1 * (d - 0.95)));
+    for (let c = 0; c < 3; c++) buf.col.push((o.sp.inner[c] + (o.sp.tip[c] - o.sp.inner[c]) * w) * o.bright);
+  }
+  const idx = g.index.array;
+  for (let i = 0; i < idx.length; i++) buf.idx.push(base + idx[i]);
+}
+
+// 生成一棵针叶树（scale=1，树根在原点）。lod=0 近景主树 / 1 远景背景林（面数减半）
+function buildConifer(species, seed, lod = 0) {
+  const sp = TREE_SPECIES[species];
+  const rng = mulberry32(seed * 7919 + (species === 'pine' ? 3 : 1));
+  const H = sp.H * (0.92 + rng() * 0.16);
+  const bendAz = rng() * Math.PI * 2, bend = 0.1 + rng() * 0.25;
+  const axis = y => {                                   // 树干弯曲后的中轴偏移
+    const t = Math.max(0, y) / H;
+    return [bend * t * t * Math.cos(bendAz), bend * t * t * Math.sin(bendAz)];
+  };
+  // —— 树干 ——
+  const trunkTop = species === 'pine' ? 0.93 : 0.97;
+  const r0 = species === 'pine' ? 0.021 * H : 0.024 * H;
+  const RAD = lod ? 8 : 12, ROWS = lod ? 8 : 18;
+  let trunk = new THREE.CylinderGeometry(0.1 * r0, r0, H * trunkTop + 0.35, RAD, ROWS, true);
+  trunk.translate(0, (H * trunkTop + 0.35) / 2 - 0.35, 0);   // 根部埋入地下 0.35 m，坡地上不露底
+  {
+    const p = trunk.attributes.position, uv = trunk.attributes.uv;
+    const flareH = 0.7 + 0.05 * H;
+    for (let i = 0; i < p.count; i++) {
+      let x = p.getX(i), z = p.getZ(i);
+      const y = p.getY(i), ang = Math.atan2(z, x);
+      const f = Math.max(0, 1 - (y + 0.35) / flareH);
+      const flare = 1 + 1.1 * f * f * (0.6 + 0.4 * Math.cos(ang * 5 + seed));   // 板根
+      const bark = 1 + 0.045 * triNoise(Math.cos(ang) * 2, y * 1.4, Math.sin(ang) * 2, seed);
+      const [ox, oz] = axis(y);
+      p.setXYZ(i, x * flare * bark + ox, y, z * flare * bark + oz);
+      uv.setXY(i, uv.getX(i) * 2, (y + 0.35) / 1.7);      // 按实际尺寸铺树皮：周向 2 次、每 1.7 m 一次
+    }
+    trunk.computeVertexNormals();
+    weldSeamNormals(trunk, RAD, ROWS);
+  }
+  const limbs = [trunk];
+  const trunkAt = y => { const [ox, oz] = axis(y); return new THREE.Vector3(ox, y, oz); };
+  // 枯枝桩：树冠以下残留的短枝（向外略下垂）
+  const stubTop = species === 'pine' ? sp.crownBase * H : Math.max(0.6, sp.crownBase * H);
+  const nStub = lod ? 0 : (species === 'pine' ? 9 : 4);
+  for (let i = 0; i < nStub; i++) {
+    const y = 0.9 + rng() * (stubTop - 0.9);
+    const a = rng() * Math.PI * 2, len = 0.15 + rng() * 0.35;
+    const p0 = trunkAt(y);
+    const p1 = p0.clone().add(new THREE.Vector3(Math.cos(a) * len, -len * (0.1 + rng() * 0.3), Math.sin(a) * len));
+    limbs.push(makeLimbGeometry(p0, p1, 0.02 + rng() * 0.012, 0.004));
+  }
+  // —— 针叶 ——
+  const buf = { pos: [], col: [], idx: [] };
+  if (species === 'spruce') {
+    let N = sp.tiers[0] + Math.floor(rng() * (sp.tiers[1] - sp.tiers[0] + 1));
+    if (lod) N = Math.round(N * 0.6);                    // 远景：层数减少、每层更厚，剪影不变
+    const yb = (sp.crownBase * (0.8 + rng() * 0.5)) * H, yt = 0.93 * H;
+    const spacing = (yt - yb) / (N - 1);
+    for (let i = 0; i < N; i++) {
+      const t = i / (N - 1);
+      const y = yb + (yt - yb) * Math.pow(t, 0.95) + (rng() - 0.5) * spacing * 0.3;
+      const [ox, oz] = axis(y);
+      const nb = sp.lobes[0] + Math.floor(rng() * (sp.lobes[1] - sp.lobes[0] + 1));
+      addNeedleTier(buf, {
+        cx: ox + (rng() - 0.5) * 0.04 * H, cy: y, cz: oz + (rng() - 0.5) * 0.04 * H,
+        R: sp.rMax * H * Math.pow(1 - t, 0.92) * (0.86 + rng() * 0.28) + 0.16,
+        dh: spacing * 1.55, droop: spacing * (0.5 + 1.0 * (1 - t)) * sp.droop,
+        nb, phase: rng() * 6.283, lobeAmp: 0.5, dome: 0,
+        bright: (0.8 + 0.35 * t) * (0.85 + rng() * 0.3), sp, rng, seed: seed + i,
+        A: lod ? Math.max(12, nb * 2) : Math.max(24, nb * 5), K: lod ? 1 : 4
+      });
+    }
+    // 顶梢：细长尖顶
+    const [ox, oz] = axis(H);
+    addNeedleTier(buf, {
+      cx: ox, cy: 0.955 * H, cz: oz, R: 0.2, dh: 0.09 * H, droop: 0.05, nb: 5, phase: rng() * 6.283,
+      lobeAmp: 0.4, dome: 0.4, bright: 1.15, sp, rng, seed: seed + 99, A: 15, K: 2
+    });
+  } else {
+    const n = sp.branches[0] + Math.floor(rng() * (sp.branches[1] - sp.branches[0] + 1));
+    for (let k = 0; k < n; k++) {
+      const t = k / (n - 1);
+      const y = (sp.crownBase + (0.9 - sp.crownBase) * t + (rng() - 0.5) * 0.04) * H;
+      const az = k * 2.39996 + (rng() - 0.5) * 0.8;       // 黄金角错开，树冠不偏一侧
+      const reach = (0.1 + 0.2 * (1 - t)) * H * (0.75 + rng() * 0.5);
+      const p0 = trunkAt(y - 0.02 * H);
+      const p1 = trunkAt(y).add(new THREE.Vector3(Math.cos(az) * reach, 0.05 * H, Math.sin(az) * reach));
+      limbs.push(makeLimbGeometry(p0, p1, 0.012 * H * (1 - 0.4 * t), 0.004 * H, lod ? 4 : 5));
+      // 每根主枝托 3 团针叶：枝端最大、枝中段与侧上方各一团小的 → 不规则的团簇状树冠
+      const clumps = lod ? 1 : 4;
+      for (let q = 0; q < clumps; q++) {
+        const c = q === 0 ? p1
+          : q === 1 ? p0.clone().lerp(p1, 0.6).add(new THREE.Vector3(0, 0.025 * H, 0))
+          : p1.clone().add(new THREE.Vector3((rng() - 0.5) * 0.13 * H, (0.02 + 0.04 * rng()) * H, (rng() - 0.5) * 0.13 * H));
+        const R = (q === 0 ? (lod ? 1.35 : 1) : 0.72) * (0.068 + 0.03 * rng()) * H * (1.1 - 0.35 * t);
+        addNeedleClump(buf, {
+          cx: c.x, cy: c.y, cz: c.z, R, squash: 0.62 + rng() * 0.2,
+          bright: (0.85 + 0.3 * t) * (0.85 + rng() * 0.3), sp, seed: seed + k * 3 + q, detail: lod ? 0 : 2
+        });
+      }
+    }
+    // 树顶一团
+    const top = trunkAt(0.95 * H);
+    addNeedleClump(buf, {
+      cx: top.x, cy: top.y, cz: top.z, R: 0.085 * H, squash: 0.75, bright: 1.1, sp, seed: seed + 77, detail: lod ? 1 : 2
+    });
+  }
+  const foliage = new THREE.BufferGeometry();
+  foliage.setAttribute('position', new THREE.Float32BufferAttribute(buf.pos, 3));
+  foliage.setAttribute('color', new THREE.Float32BufferAttribute(buf.col, 3));
+  foliage.setIndex(buf.idx);
+  foliage.computeVertexNormals();
+  const trunkGeo = limbs.length > 1 ? mergeGeometries(limbs) : trunk;
+  return { trunk: trunkGeo, foliage, H };
+}
+
+// 组装成 Group：Trunk + Foliage（树的"模板"部分，Blender 覆盖时整体替换它们）
+function makeConiferGroup(species, seed, lod = 0) {
+  const { trunk, foliage } = buildConifer(species, seed, lod);
+  const g = new THREE.Group();
+  g.name = species === 'pine' ? 'Pine' : 'Spruce';
+  const tm = new THREE.Mesh(trunk, trunkMat);
+  tm.name = 'Trunk';
+  tm.castShadow = true; tm.receiveShadow = true;
+  const fm = new THREE.Mesh(foliage, needleMat);
+  fm.name = 'Foliage';
+  // 针叶不投影也不受影：树在火堆 9~27 m 外，火光照度只剩 0.01~0.13 lux（远低于天光），
+  // 树冠投影肉眼不可见，却要在点光阴影的 6 个立方体面里各渲染一遍（约 +60 万三角形）；
+  // 双面薄片的自阴影还易出条纹（shadow acne）。树干仍投影
+  fm.castShadow = false; fm.receiveShadow = false;
+  g.add(tm, fm);
+  return g;
+}
+
+function makeTree(x, z, s, species = 'spruce') {
+  const tree = new THREE.Group();
+  const seed = (Math.random() * 1e6) | 0;
+  const body = makeConiferGroup(species, seed);
+  body.userData.treeTemplate = species;                  // 覆盖加载时按树种整体替换
+  tree.add(body);
   // 树脚矮灌木 0~2 丛（复用岩石几何压扁）
   const bushes = (Math.random() * 3) | 0;
   for (let i = 0; i < bushes; i++) {
     const bush = new THREE.Mesh(
-      makeRockGeometry(0.22 * s * (0.7 + Math.random() * 0.6), Math.random() * 50, 0.4),
-      leafMats[(Math.random() * 3) | 0]
+      makeRockGeometry(0.3 * (0.7 + Math.random() * 0.6), Math.random() * 50, 0.4),
+      bushMat
     );
-    const ba = Math.random() * Math.PI * 2, br = (0.55 + Math.random() * 0.5) * s;
-    bush.position.set(Math.cos(ba) * br, 0.08 * s, Math.sin(ba) * br);
+    bush.name = 'Undergrowth';
+    const ba = Math.random() * Math.PI * 2, br = 0.7 + Math.random() * 0.8;
+    bush.position.set(Math.cos(ba) * br, 0.06, Math.sin(ba) * br);
     bush.scale.y = 0.62;
     bush.receiveShadow = true;
     tree.add(bush);
   }
-  tree.position.set(x, groundHeight(x, z) - 0.03, z);
+  tree.name = `Tree_${species}_${String(trees.length).padStart(2, '0')}`;
+  tree.scale.setScalar(s);
+  tree.position.set(x, groundHeight(x, z), z);
   tree.rotation.y = Math.random() * Math.PI * 2;
   forestEnv.add(tree);
-  trees.push({ g: tree, ph: Math.random() * 6.28, sp: 0.5 + Math.random() * 0.5, amp: 0.012 + Math.random() * 0.022 });
+  trees.push({ g: tree, ph: Math.random() * 6.28, sp: 0.5 + Math.random() * 0.5, amp: 0.008 + Math.random() * 0.014, species, s });
 }
 {
   const rng = mulberry32(7);
-  const LAKE_AZ = Math.atan2(-38, -24);   // 默认视角正对湖面的方位
   for (let i = 0; i < 14; i++) {
     let a = rng() * Math.PI * 2;
     const r = 9 + rng() * 18;
     // 让出朝湖面/月亮的视野走廊（参考图中树木只在画面两侧）
-    const d = Math.atan2(Math.sin(a - LAKE_AZ), Math.cos(a - LAKE_AZ));
+    const d = angDiff(a, LAKE_AZ);
     if (Math.abs(d) < 0.6) a = LAKE_AZ + Math.sign(d || 1) * (0.6 + rng() * 0.25);
-    makeTree(Math.cos(a) * r, Math.sin(a) * r, 0.8 + rng() * 1.4);
+    const species = rng() < 0.68 ? 'spruce' : 'pine';
+    makeTree(Math.cos(a) * r, Math.sin(a) * r, 0.85 + rng() * 0.85, species);
   }
 }
+
+// 中景背景林（r 28~62 m）：填补主树与远山之间的空旷地带，形成林缘层次。
+// 3 个变体 × 2 树种的低面数模型，InstancedMesh 实例化（每部件一次 draw call），
+// 避开湖面及其岸边；距离已超出火光阴影范围，不投影
+const forestBackdrop = new THREE.Group();
+forestBackdrop.name = 'ForestBackdrop';
+{
+  const rng = mulberry32(19);
+  const lakeC = Math.cos(1.08), lakeS = Math.sin(1.08);
+  const inLake = (x, z, m) => {                         // 湖面椭圆（与湖面网格同参数）+ 岸边留白 m
+    const dx = x + 24, dz = z + 38;
+    const lx = dx * lakeC - dz * lakeS, lz = dx * lakeS + dz * lakeC;
+    return (lx / (27.2 + m)) ** 2 + (lz / (19.6 + m)) ** 2 < 1;
+  };
+  const variants = [];
+  for (const species of ['spruce', 'pine']) {
+    for (let v = 0; v < 3; v++) variants.push({ species, geo: buildConifer(species, 500 + v * 13, 1), mats: [] });
+  }
+  for (let tries = 0; tries < 400; tries++) {
+    const a = rng() * Math.PI * 2, r = 28 + rng() * 34;
+    const x = Math.cos(a) * r, z = Math.sin(a) * r;
+    if (inLake(x, z, 3)) continue;
+    if (Math.abs(angDiff(a, LAKE_AZ)) < 0.42 && r < 46) continue;   // 湖面视野走廊
+    if (fbm2(x * 0.06, z * 0.06, 57, 2) < -0.25) continue;          // 林窗：成片分布、有疏有密
+    const v = variants[(rng() < 0.7 ? 0 : 3) + ((rng() * 3) | 0)];
+    const s = 0.8 + rng() * 0.8;
+    v.mats.push(new THREE.Matrix4().compose(
+      new THREE.Vector3(x, groundHeight(x, z), z),
+      new THREE.Quaternion().setFromAxisAngle(UP_AXIS, rng() * Math.PI * 2),
+      new THREE.Vector3(s * (0.9 + rng() * 0.2), s, s * (0.9 + rng() * 0.2))
+    ));
+  }
+  for (const v of variants) {
+    if (!v.mats.length) continue;
+    for (const [part, geo, mat] of [['Trunk', v.geo.trunk, trunkMat], ['Foliage', v.geo.foliage, needleMat]]) {
+      const im = new THREE.InstancedMesh(geo, mat, v.mats.length);
+      v.mats.forEach((m, i) => im.setMatrixAt(i, m));
+      im.name = `Backdrop_${v.species}_${part}`;
+      im.userData.treeTemplate = v.species;
+      im.computeBoundingSphere();
+      forestBackdrop.add(im);
+    }
+  }
+}
+forestEnv.add(forestBackdrop);
 
 /* ============================================================
    海边场景：月光沙滩 + 夜海 —— 与森林场景二选一显示（beachEnv）。
@@ -1087,6 +1583,7 @@ function beachHeight(x, z) {
   return dune * (1 - shore) - 1.1 * shore;
 }
 const oceanGlints = [];   // 海面碎光（月光倒影带）
+let coastHills = null;    // 海岸丘陵 + 礁岛（Blender 导出/覆盖用）
 const shoreFoam = [];     // 冲滩泡沫线
 const swellBands = [];    // 近岸涌浪亮带
 {
@@ -1120,16 +1617,23 @@ const swellBands = [];    // 近岸涌浪亮带
     t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(14, 14); t.anisotropy = aniso;
     return t;
   };
-  const sandGeo = new THREE.PlaneGeometry(130, 130, 64, 64);
+  // 与林地同尺寸，外缘同样下潜到海岸山体环下方（陆侧）/ 海面下方（海侧）
+  const sandGeo = new THREE.PlaneGeometry(TERRAIN_SIZE, TERRAIN_SIZE, 75, 75);
   {
     const pos = sandGeo.attributes.position;
-    for (let i = 0; i < pos.count; i++) pos.setZ(i, beachHeight(pos.getX(i), -pos.getY(i)));
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i), z = -pos.getY(i);
+      pos.setZ(i, beachHeight(x, z) - terrainDip(x, z));
+    }
     sandGeo.computeVertexNormals();
   }
+  const sandMaps = { map: mk(col, true), bumpMap: mk(bmp, false) };
+  for (const t of Object.values(sandMaps)) t.repeat.set(16, 16);   // 保持旧版纹素密度
   const sand = new THREE.Mesh(sandGeo, new THREE.MeshStandardMaterial({
-    map: mk(col, true), bumpMap: mk(bmp, false), bumpScale: 0.04,
+    name: 'BeachSand', ...sandMaps, bumpScale: 0.04,
     roughness: 0.95, metalness: 0
   }));
+  sand.name = 'BeachTerrain';
   sand.rotation.x = -Math.PI / 2;
   sand.receiveShadow = true;
   beachEnv.add(sand);
@@ -1137,8 +1641,9 @@ const swellBands = [];    // 近岸涌浪亮带
   // —— 夜海：深蓝大圆盘（远处被雾融进夜色成地平线），动感全靠碎光/涌浪/泡沫 ——
   const ocean = new THREE.Mesh(
     new THREE.CircleGeometry(300, 64),
-    new THREE.MeshBasicMaterial({ color: 0x0c1a2e })
+    new THREE.MeshBasicMaterial({ name: 'NightSea', color: 0x0c1a2e })
   );
+  ocean.name = 'Ocean';
   ocean.rotation.x = -Math.PI / 2;
   ocean.position.y = WATER_Y;
   beachEnv.add(ocean);
@@ -1215,6 +1720,7 @@ const swellBands = [];    // 近岸涌浪亮带
       makeWaveStrip(7 + rng() * 8, 0.9 + rng() * 0.6, 0.5 + rng() * 0.8, 11 + i * 5.3),
       new THREE.MeshBasicMaterial({ map: foamTex, transparent: true, opacity: 0, depthWrite: false })
     );
+    mesh.userData.noExport = true;   // 动态泡沫（透明度逐帧变化）不导出
     mesh.rotation.x = -Math.PI / 2 + 0.08;              // 顺着沙坡微仰
     const lx = -21 + i * 8.4 + (rng() - 0.5) * 5;       // 沿岸摊开、间距不均
     mesh.position.set(lx, WATER_Y + 0.05, SHORE_S);
@@ -1239,9 +1745,10 @@ const swellBands = [];    // 近岸涌浪亮带
   {
     const shells = new THREE.InstancedMesh(
       new THREE.SphereGeometry(1, 7, 5),
-      new THREE.MeshStandardMaterial({ color: 0xcfc0a6, roughness: 0.85 }),
+      new THREE.MeshStandardMaterial({ name: 'Shell', color: 0xcfc0a6, roughness: 0.85 }),
       36
     );
+    shells.name = 'Shells';
     const dummy = new THREE.Object3D();
     for (let i = 0; i < 36; i++) {
       const lx = (rng() - 0.5) * 40, lz = 4 + rng() * 4.2;
@@ -1260,9 +1767,10 @@ const swellBands = [];    // 近岸涌浪亮带
 
   // —— 漂流木：褪色的枯木横卧在高潮线附近 ——
   {
-    const driftMat = new THREE.MeshStandardMaterial({ color: 0x6f6150, roughness: 1 });
+    const driftMat = new THREE.MeshStandardMaterial({ name: 'Driftwood', color: 0x6f6150, roughness: 1 });
     for (let i = 0; i < 2; i++) {
       const mesh = new THREE.Mesh(makeLogGeometry(0.72, 1, 1, 9.4 + i * 3.1), driftMat);
+      mesh.name = `Driftwood_${i}`;
       const lx = (i ? -1 : 1) * (8 + rng() * 5), lz = 5.6 + rng() * 1.6;
       const wx = SEA_DIR.z * lx + SEA_DIR.x * lz;
       const wz = -SEA_DIR.x * lx + SEA_DIR.z * lz;
@@ -1278,9 +1786,10 @@ const swellBands = [];    // 近岸涌浪亮带
 
   // —— 近岸礁石：半浸在浪线里的深色岩块 ——
   {
-    const rockMat = new THREE.MeshStandardMaterial({ color: 0x39332c, roughness: 0.95, flatShading: true });
+    const rockMat = new THREE.MeshStandardMaterial({ name: 'ShoreRock', color: 0x39332c, roughness: 0.95, flatShading: true });
     for (let i = 0; i < 3; i++) {
       const rock = new THREE.Mesh(makeRockGeometry(1, 61 + i * 7, 0.3), rockMat);
+      rock.name = `ShoreRock_${i}`;
       const lx = (rng() - 0.5) * 34, lz = SHORE_S + rng() * 3;
       const wx = SEA_DIR.z * lx + SEA_DIR.x * lz;
       const wz = -SEA_DIR.x * lx + SEA_DIR.z * lz;
@@ -1293,86 +1802,284 @@ const swellBands = [];    // 近岸涌浪亮带
     }
   }
 
-  // —— 远处剪影：海上小岛 + 营地背后的海岬余脉（挡住陆侧地平线）——
+  // —— 远景：营地背后的海岸丘陵（陆侧半环）+ 海上礁岛 ——
+  // 旧版是 11 个压扁球体（光滑圆顶、MeshBasic 不受光、底部悬在地面外），
+  // 改为与林地远山同一套环形高度场：丘陵从沙滩后缓升，两翼顺势没入海中成岬角；
+  // 礁岛为脊状噪声塑形的岩体，水线处有浅色湿岩带
   {
-    const islandMat = new THREE.MeshBasicMaterial({ color: 0x0b1526 });
+    const S = THREE.MathUtils.smoothstep;
+    const LAND_AZ = SEA_AZ + Math.PI;
+    const coastHeight = (x, z) => {
+      const r = Math.hypot(x, z);
+      const sd = x * SEA_DIR.x + z * SEA_DIR.z;                    // >SHORE_S 即海
+      const inland = S(SHORE_S - sd, 4, 46);                       // 岸线 0 → 内陆 1
+      const ridge = ridged2(x * 0.013, z * 0.013, 61, 5);
+      const hill = 0.5 + 0.5 * fbm2(x * 0.03, z * 0.03, 67, 4);
+      return beachHeight(x, z) - 0.28
+           + inland * (3.2 * hill * S(r, 66, 88) + 30 * S(r, 72, 130) * (0.1 + 1.2 * ridge));
+    };
+    const coastColor = (x, y, z, ny, out) => {
+      const n = fbm2(x * 0.05, z * 0.05, 71, 3);
+      const sandW = 1 - S(y, 0.4, 2.2);
+      const scrubW = S(ny, 0.6, 0.82) * (1 - S(y, 14 + 5 * n, 22 + 5 * n));
+      let r = 0.058, g = 0.053, b = 0.048;                         // 岩
+      r += (0.016 - r) * scrubW; g += (0.025 - g) * scrubW; b += (0.015 - b) * scrubW;   // 灌丛/海岸松
+      r += (0.17 - r) * sandW; g += (0.13 - g) * sandW; b += (0.085 - b) * sandW;        // 沙
+      const k = 0.8 + 0.35 * (0.5 + 0.5 * n);
+      out[0] = r * k; out[1] = g * k; out[2] = b * k;
+    };
+    const mat = makeDistantMaterial('CoastTerrain');
+    const coast = coastHills = new THREE.Group();
+    coast.name = 'CoastHills';
+    const ring = new THREE.Mesh(makeRingTerrain({
+      rIn: 64, rOut: 200, radial: 60, angular: 220,
+      azFrom: LAND_AZ - 2.0, azTo: LAND_AZ + 2.0,
+      heightFn: coastHeight, colorFn: coastColor
+    }), mat);
+    ring.name = 'CoastRange';
+    coast.add(ring);
+    // 丘陵低坡的海岸松林剪影
+    const frng = mulberry32(606);
+    const pts = [];
+    for (let tries = 0; tries < 5000 && pts.length < 600; tries++) {
+      const az = LAND_AZ + (frng() - 0.5) * 3.4, r = 70 + frng() * 70;
+      const x = Math.cos(az) * r, z = Math.sin(az) * r;
+      const y = coastHeight(x, z);
+      if (y < 2.5 || y > 18) continue;
+      const e = 1.5;
+      const ny = 1 / Math.hypot((coastHeight(x + e, z) - coastHeight(x - e, z)) / (2 * e), 1,
+                                (coastHeight(x, z + e) - coastHeight(x, z - e)) / (2 * e));
+      if (ny < 0.75 || fbm2(x * 0.05, z * 0.05, 93, 3) < -0.1) continue;
+      pts.push([x, y, z, 4 + frng() * 4]);
+    }
+    const belt = new THREE.Mesh(makeSilhouetteForest(pts, 607, [0.014, 0.022, 0.013]), mat);
+    belt.name = 'CoastForest';
+    coast.add(belt);
+    beachEnv.add(coast);
+
+    // 礁岛：局部极坐标网格，外缘沉到水下；平移到海上
     for (let i = 0; i < 4; i++) {
       const az = SEA_AZ + (rng() - 0.5) * 1.7;
       const d = 85 + rng() * 45;
-      const h = 4 + rng() * 7, w = h * (2.2 + rng() * 1.6);
-      const m = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 12), islandMat);
-      m.scale.set(w, h, w * 0.7);
-      m.position.set(Math.cos(az) * d, WATER_Y - h * 0.35, Math.sin(az) * d);
-      m.rotation.y = rng() * 3;
-      beachEnv.add(m);
-    }
-    const capeMat = new THREE.MeshBasicMaterial({ color: 0x0c1322 });
-    for (let i = 0; i < 7; i++) {
-      const az = SEA_AZ + Math.PI + (rng() - 0.5) * 2.4;
-      const d = 55 + rng() * 30;
-      const h = 8 + rng() * 12, w = h * (1.1 + rng() * 0.9);
-      const m = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 12), capeMat);
-      m.scale.set(w, h, w * 0.7);
-      m.position.set(Math.cos(az) * d, -h * 0.25, Math.sin(az) * d);
-      m.rotation.y = rng() * 3;
-      beachEnv.add(m);
+      const h = 4 + rng() * 7, R = h * (2.2 + rng() * 1.6);
+      const cx = Math.cos(az) * d, cz = Math.sin(az) * d, seed = 700 + i * 11;
+      const geo = makeRingTerrain({
+        rIn: 0.4, rOut: R * 1.35, radial: 16, angular: 56,
+        heightFn: (x, z) => {
+          const rr = Math.hypot(x, z), a = Math.atan2(z, x);
+          const edge = R * (1 + 0.28 * fbm2(Math.cos(a) * 1.4 + seed, Math.sin(a) * 1.4, seed, 3));
+          const prof = Math.pow(Math.max(0, 1 - (rr / edge) ** 2), 1.2);
+          return WATER_Y - 1.6 + (h + 1.6) * prof * (0.5 + 0.9 * ridged2(x * 0.09, z * 0.09, seed, 4));
+        },
+        colorFn: (x, y, z, ny, out) => {
+          const wet = 1 - THREE.MathUtils.smoothstep(y, WATER_Y + 0.2, WATER_Y + 1.2);
+          const scrub = THREE.MathUtils.smoothstep(ny, 0.7, 0.9) * THREE.MathUtils.smoothstep(y, 1.5, 3);
+          out[0] = 0.05 + 0.05 * wet - 0.034 * scrub;
+          out[1] = 0.047 + 0.045 * wet - 0.022 * scrub;
+          out[2] = 0.044 + 0.04 * wet - 0.03 * scrub;
+        }
+      });
+      geo.translate(cx, 0, cz);
+      const isle = new THREE.Mesh(geo, mat);
+      isle.name = `Islet_${i}`;
+      coast.add(isle);
     }
   }
 }
 
-// —— 棕榈树：弯曲树干 + 羽状下垂叶冠，站在视野走廊两侧不挡海 ——
-// 叶片：沿长度先扬后垂的抛物线弧 + 叶缘锯齿收窄（羽叶剪影）
-function makePalmLeaf(len, wid, droop, mat) {
-  const geo = new THREE.PlaneGeometry(len, wid, 12, 1);
-  geo.translate(len / 2, 0, 0);                         // 叶根移到原点，便于绕树顶旋转
-  const p = geo.attributes.position;
-  for (let i = 0; i < p.count; i++) {
-    const u = p.getX(i) / len;                          // 0 叶根 → 1 叶尖
-    const w = p.getY(i);
-    p.setZ(i, w * (1 - 0.82 * u) * (0.72 + 0.45 * Math.abs(Math.sin(u * 26))));  // 宽度转到 z：收窄 + 锯齿
-    p.setY(i, len * (0.3 * u - 0.55 * droop * u * u));  // 先扬后垂
+// —— 棕榈树：锥形弯曲树干（叶痕环纹）+ 羽状复叶冠，站在视野走廊两侧不挡海 ——
+// 旧版叶片是一条锯齿边的弯曲窄带（像伞骨），树干等粗无收分。新版：
+// · 树干：基部膨大、向上收细的弯曲锥管，树皮贴图画出一圈圈叶痕
+// · 复叶：沿先扬后垂的叶轴两侧排列数十片小叶，小叶呈 V 形向下斜展、中段最长、两端渐短
+// · 冠下 2~3 片枯叶下垂，冠心有叶鞘膨大部，椰果成簇
+const palmBarkTex = (() => {
+  // 叶痕环纹：沿 U（树干长度方向）重复的横向深色环 + 纵向细纤维
+  const cv = document.createElement('canvas'); cv.width = 128; cv.height = 64;
+  const g = cv.getContext('2d');
+  const rng = mulberry32(333);
+  g.fillStyle = '#6b5640'; g.fillRect(0, 0, 128, 64);
+  for (let i = 0; i < 90; i++) {
+    const l = 70 + rng() * 60 | 0;
+    g.fillStyle = `rgba(${l},${l * 0.82 | 0},${l * 0.62 | 0},0.35)`;
+    g.fillRect(0, rng() * 64, 128, 1);
   }
-  geo.computeVertexNormals();
-  return new THREE.Mesh(geo, mat);
+  for (let x = 0; x < 128; x += 32) {                  // 每 32px 一道叶痕：暗槽 + 亮棱
+    g.fillStyle = 'rgba(30,22,14,0.85)'; g.fillRect(x + 12, 0, 5, 64);
+    g.fillStyle = 'rgba(150,126,96,0.55)'; g.fillRect(x + 17, 0, 3, 64);
+  }
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
+})();
+const palmTrunkMat = new THREE.MeshStandardMaterial({
+  name: 'PalmTrunk', map: palmBarkTex, bumpMap: palmBarkTex, bumpScale: 0.03, roughness: 1
+});
+const palmLeafMat = new THREE.MeshStandardMaterial({
+  name: 'PalmFronds', vertexColors: true, roughness: 0.85, side: THREE.DoubleSide
+});
+const palmNutMat = new THREE.MeshStandardMaterial({ name: 'Coconut', color: 0x3d2c17, roughness: 0.9 });
+
+// 沿曲线的变径管：先生成单位半径 TubeGeometry，再逐圈按 radiusFn(t) 缩放到中轴
+function makeTaperedTube(curve, tubular, radial, radiusFn) {
+  const g = new THREE.TubeGeometry(curve, tubular, 1, radial, false);
+  const p = g.attributes.position, c = new THREE.Vector3(), v = new THREE.Vector3();
+  for (let i = 0; i <= tubular; i++) {
+    const t = i / tubular;
+    curve.getPointAt(t, c);
+    const k = radiusFn(t);
+    for (let j = 0; j <= radial; j++) {
+      const idx = i * (radial + 1) + j;
+      v.fromBufferAttribute(p, idx).sub(c).multiplyScalar(k).add(c);
+      p.setXYZ(idx, v.x, v.y, v.z);
+    }
+  }
+  g.computeVertexNormals();
+  // Tube 的周向接缝（j=0 与 j=radial）同样成对重复，平均法线消除接缝线
+  const n = g.attributes.normal;
+  for (let i = 0; i <= tubular; i++) {
+    const a = i * (radial + 1), b = a + radial;
+    const x = n.getX(a) + n.getX(b), y = n.getY(a) + n.getY(b), z = n.getZ(a) + n.getZ(b);
+    const l = Math.hypot(x, y, z) || 1;
+    n.setXYZ(a, x / l, y / l, z / l); n.setXYZ(b, x / l, y / l, z / l);
+  }
+  return g;
 }
-const palmTrunkMat = new THREE.MeshStandardMaterial({ color: 0x4a3826, roughness: 1 });
-const palmLeafMats = [0x14301d, 0x0f2617, 0x1a3a22].map(c =>
-  new THREE.MeshStandardMaterial({ color: c, roughness: 0.95, side: THREE.DoubleSide }));
-function makePalm(x, z, s) {
+
+// 一片羽状复叶：叶轴折线（仰角 e0 → 末端下垂 droop），两侧各 n 片 V 形下斜的小叶
+function addPalmFrond(buf, o) {
+  const { base, az, e0, droop, L, n, rng, colA, colB } = o;
+  const fwdH = new THREE.Vector3(Math.cos(az), 0, Math.sin(az));
+  const side = new THREE.Vector3(-Math.sin(az), 0, Math.cos(az));
+  const pts = [], dirs = [];
+  const p = base.clone();
+  for (let i = 0; i <= n; i++) {
+    const u = i / n;
+    const ang = e0 - (e0 + droop) * Math.pow(u, 1.35);
+    const d = fwdH.clone().multiplyScalar(Math.cos(ang)).setY(Math.sin(ang));
+    pts.push(p.clone()); dirs.push(d);
+    p.addScaledVector(d, L / n);
+  }
+  const push = (v, u) => {
+    buf.pos.push(v.x, v.y, v.z);
+    for (let c = 0; c < 3; c++) buf.col.push(colA[c] + (colB[c] - colA[c]) * u);
+  };
+  // 叶轴：细窄条
+  for (let i = 0; i < n; i++) {
+    const b = buf.pos.length / 3, w = 0.018 * L * (1 - 0.7 * i / n);
+    for (const q of [pts[i], pts[i + 1]]) {
+      push(q.clone().addScaledVector(side, -w), i / n);
+      push(q.clone().addScaledVector(side, w), i / n);
+    }
+    buf.idx.push(b, b + 2, b + 1, b + 1, b + 2, b + 3);
+  }
+  // 小叶
+  for (let i = 1; i < n; i++) {
+    const u = i / n;
+    const ll = L * 0.36 * Math.pow(Math.sin(Math.PI * (0.08 + 0.92 * u)), 0.7) * (1 - 0.25 * u) * (0.85 + rng() * 0.3);
+    const w = 0.045 * L * (1 - 0.45 * u);
+    const beta = 0.45 + 0.5 * u + (rng() - 0.5) * 0.2;   // 下斜角：越靠叶尖越垂
+    for (const sgn of [-1, 1]) {
+      const dir = side.clone().multiplyScalar(sgn * Math.cos(beta))
+        .addScaledVector(dirs[i], 0.45).setY(-Math.sin(beta) + dirs[i].y * 0.4).normalize();
+      const b0 = pts[i], along = dirs[i].clone().multiplyScalar(w * 0.5);
+      const mid = b0.clone().addScaledVector(dir, ll * 0.5).setY(b0.y + dir.y * ll * 0.5 - 0.04 * ll);
+      const tip = b0.clone().addScaledVector(dir, ll).setY(b0.y + dir.y * ll - 0.14 * ll);
+      const k = buf.pos.length / 3;
+      push(b0.clone().sub(along), u);
+      push(b0.clone().add(along), u);
+      push(mid.clone().sub(along.clone().multiplyScalar(0.8)), Math.min(1, u + 0.25));
+      push(mid.clone().add(along.clone().multiplyScalar(0.8)), Math.min(1, u + 0.25));
+      push(tip, Math.min(1, u + 0.45));
+      buf.idx.push(k, k + 2, k + 1, k + 1, k + 2, k + 3, k + 2, k + 4, k + 3);
+    }
+  }
+}
+
+// 棕榈模板（scale=1，树根在原点）：返回 Group(Palm) ⊃ Trunk / Fronds / Coconuts
+function buildPalm(seed) {
+  const rng = mulberry32(seed * 104729 + 5);
   const g = new THREE.Group();
-  const h = (2.6 + Math.random() * 1.2) * s;
-  const leanA = Math.random() * Math.PI * 2;
-  const lean = 0.5 + Math.random() * 0.5;               // 顶部横向偏移（米）
+  g.name = 'Palm';
+  const h = 3.3 + rng() * 1.2;                          // 默认视角下冠顶低于月亮高度角，不遮月
+  const leanA = rng() * Math.PI * 2, lean = 0.55 + rng() * 0.6;
   const lx = Math.cos(leanA) * lean, lz = Math.sin(leanA) * lean;
-  const trunk = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3([
-    new THREE.Vector3(0, 0, 0),
-    new THREE.Vector3(lx * 0.15, h * 0.4, lz * 0.15),
+  const curve = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(0, -0.3, 0),
+    new THREE.Vector3(lx * 0.12, h * 0.4, lz * 0.12),
     new THREE.Vector3(lx * 0.55, h * 0.78, lz * 0.55),
     new THREE.Vector3(lx, h, lz)
-  ]), 10, 0.09 * s, 7), palmTrunkMat);
+  ]);
+  const trunkGeo = makeTaperedTube(curve, 28, 10, t =>
+    0.085 + 0.06 * Math.pow(1 - t, 3) + 0.012 * (1 - t));   // 基部膨大、向上收细
+  {
+    const uv = trunkGeo.attributes.uv;                      // U 沿树干：每 0.3 m 一道叶痕（贴图每重复含 4 道）
+    for (let i = 0; i < uv.count; i++) uv.setX(i, uv.getX(i) * (h / 1.2));
+  }
+  const trunk = new THREE.Mesh(trunkGeo, palmTrunkMat);
+  trunk.name = 'Trunk';
   trunk.castShadow = true;
   g.add(trunk);
-  const nLeaf = 8 + (Math.random() * 3 | 0);
+  // 冠心叶鞘：顶端一团略膨大的绿褐色，遮住叶柄交汇处
+  const top = new THREE.Vector3(lx, h, lz);
+  const buf = { pos: [], col: [], idx: [] };
+  addNeedleClump(buf, {
+    cx: top.x, cy: top.y + 0.05, cz: top.z, R: 0.2, squash: 0.9, bright: 1, seed: seed + 1, detail: 1,
+    sp: { inner: [0.03, 0.03, 0.015], tip: [0.05, 0.055, 0.025] }
+  });
+  const nLeaf = 11 + ((rng() * 4) | 0);
   for (let i = 0; i < nLeaf; i++) {
-    const leaf = makePalmLeaf((1.5 + Math.random() * 0.6) * s, 0.4 * s,
-      0.8 + Math.random() * 0.7, palmLeafMats[(Math.random() * 3) | 0]);
-    leaf.position.set(lx, h, lz);
-    leaf.rotation.y = (i / nLeaf) * Math.PI * 2 + Math.random() * 0.5;
-    leaf.castShadow = true;
-    g.add(leaf);
+    const az = (i / nLeaf) * Math.PI * 2 + rng() * 0.4;
+    const young = i % 3 === 0;                              // 新叶更挺、更短、更亮
+    addPalmFrond(buf, {
+      base: top, az, e0: young ? 0.75 + rng() * 0.3 : 0.2 + rng() * 0.35,
+      droop: young ? 0.7 + rng() * 0.4 : 1.1 + rng() * 0.6,
+      L: (young ? 1.5 : 1.9) + rng() * 0.6, n: 14, rng,
+      colA: [0.028, 0.05, 0.022], colB: young ? [0.07, 0.095, 0.035] : [0.052, 0.075, 0.03]
+    });
   }
-  const nutMat = new THREE.MeshStandardMaterial({ color: 0x3d2c17, roughness: 0.9 });
-  for (let i = 0; i < 2; i++) {                         // 椰子
-    const nut = new THREE.Mesh(new THREE.SphereGeometry(0.085 * s, 8, 6), nutMat);
-    const na = Math.random() * Math.PI * 2;
-    nut.position.set(lx + Math.cos(na) * 0.12 * s, h - 0.12 * s, lz + Math.sin(na) * 0.12 * s);
-    nut.castShadow = true;
-    g.add(nut);
+  for (let i = 0; i < 2 + ((rng() * 2) | 0); i++) {       // 下垂枯叶
+    addPalmFrond(buf, {
+      base: top.clone().setY(h - 0.12), az: rng() * Math.PI * 2, e0: -0.9 - rng() * 0.3, droop: 0.35,
+      L: 1.3 + rng() * 0.4, n: 10, rng, colA: [0.06, 0.042, 0.024], colB: [0.1, 0.075, 0.045]
+    });
   }
-  g.position.set(x, beachHeight(x, z) - 0.02, z);
+  const fronds = new THREE.BufferGeometry();
+  fronds.setAttribute('position', new THREE.Float32BufferAttribute(buf.pos, 3));
+  fronds.setAttribute('color', new THREE.Float32BufferAttribute(buf.col, 3));
+  fronds.setIndex(buf.idx);
+  fronds.computeVertexNormals();
+  const crown = new THREE.Mesh(fronds, palmLeafMat);
+  crown.name = 'Fronds';
+  crown.castShadow = true;
+  g.add(crown);
+  const nuts = [];
+  for (let i = 0; i < 3 + ((rng() * 3) | 0); i++) {        // 椰果成簇挂在冠下
+    const na = rng() * Math.PI * 2, nr = 0.1 + rng() * 0.08;
+    const s = new THREE.SphereGeometry(0.085 * (0.85 + rng() * 0.3), 8, 6);
+    s.scale(1, 1.15, 1);
+    s.translate(lx + Math.cos(na) * nr, h - 0.16 - rng() * 0.1, lz + Math.sin(na) * nr);
+    nuts.push(s);
+  }
+  const nutMesh = new THREE.Mesh(mergeGeometries(nuts), palmNutMat);
+  nutMesh.name = 'Coconuts';
+  nutMesh.castShadow = true;
+  g.add(nutMesh);
+  return g;
+}
+const palms = [];
+function makePalm(x, z, s) {
+  const g = new THREE.Group();
+  const body = buildPalm((Math.random() * 1e6) | 0);
+  body.userData.treeTemplate = 'palm';
+  g.add(body);
+  g.name = `Palm_${String(palms.length).padStart(2, '0')}`;
+  g.scale.setScalar(s);
+  g.position.set(x, beachHeight(x, z), z);
   beachEnv.add(g);
+  palms.push(g);
   // 加入树摇系统：棕榈摆幅比松树略大
-  trees.push({ g, ph: Math.random() * 6.28, sp: 0.4 + Math.random() * 0.4, amp: 0.016 + Math.random() * 0.014 });
+  trees.push({ g, ph: Math.random() * 6.28, sp: 0.4 + Math.random() * 0.4, amp: 0.016 + Math.random() * 0.014, species: 'palm', s });
 }
 {
   const rng = mulberry32(17);
@@ -1419,18 +2126,40 @@ function updateOcean(t) {
    ============================================================ */
 let lanternGlowMat = null;
 let chopRig = null;   // 劈柴桩（含斧头）——「劈柴」互动在它上面进行
-const campLight = new THREE.PointLight(0xffb259, 0, 7, 2);   // 提灯暖光（不投影，点缀补光）
+// 提灯暖光。原先不投影：灯芯离地仅 0.22 m，平方反比下正下方地面照度是 1 m 外的 20 倍，
+// 又没有油壶遮挡 → 灯脚一大片过曝白斑（海边沙地尤其明显）。真实提灯正下方被油壶挡住，
+// 光落在四周成环。改为投影（低分辨率、近距 far，只渲染附近几件道具，开销很小）
+const LANTERN_INT = 3.2;   // 原 4.5：浅色沙地上灯脚光斑仍过曝；煤油灯实际约 1~2 cd
+const campLight = new THREE.PointLight(0xffb259, 0, 7, 2);
+campLight.name = 'LanternLight';
+campLight.castShadow = true;
+campLight.shadow.mapSize.set(256, 256);
+campLight.shadow.camera.near = 0.02;
+campLight.shadow.camera.far = 6;
+campLight.shadow.bias = -0.002;
+campLight.shadow.normalBias = 0.01;
+campLight.shadow.radius = 2;
 const campProps = [];
 scene.add(campLight);
 
-function placeProp(group, az, r, faceIn = true) {
+// 道具阴影标记：userData.noCastShadow（单个网格）/ noCastShadowTree（整棵子树）不投影
+function applyPropShadows(group) {
+  const walk = (o, noCast) => {
+    noCast = noCast || !!o.userData.noCastShadowTree;
+    if (o.isMesh) {
+      o.castShadow = !noCast && !o.userData.noCastShadow;
+      o.receiveShadow = true;
+    }
+    for (const c of o.children) walk(c, noCast);
+  };
+  walk(group, false);
+}
+const PROP_GROUPS = {};   // 模型键 → 道具 Group（Blender 导出 / 覆盖加载按此查找）
+function placeProp(group, az, r, faceIn = true, key = null) {
+  if (key) { PROP_GROUPS[key] = group; group.userData.modelKey = key; }
   group.position.set(Math.cos(az) * r, 0, Math.sin(az) * r);
   if (faceIn) group.rotation.y = Math.atan2(-Math.cos(az), -Math.sin(az));   // 正面（+Z）朝火堆
-  group.traverse(o => {
-    if (!o.isMesh) return;
-    o.castShadow = !o.userData.noCastShadow;
-    o.receiveShadow = true;
-  });
+  applyPropShadows(group);
   scene.add(group);
   campProps.push(group);
 }
@@ -1438,11 +2167,12 @@ function placeProp(group, az, r, faceIn = true) {
 // 帐篷：脊形帐，帐布带垂坠下陷（中段帆布下沉、檐口外张）+ 拉绳地钉 + 软门帘
 function makeTent() {
   const g = new THREE.Group();
+  g.name = 'Tent';
   const W = 1.6, H = 1.06, D = 1.95;
-  const fab = new THREE.MeshStandardMaterial({ color: 0x3a6651, roughness: 0.93, side: THREE.DoubleSide });
-  const fabIn = new THREE.MeshStandardMaterial({ color: 0x0c1611, roughness: 1, side: THREE.DoubleSide });
-  const rope = new THREE.MeshStandardMaterial({ color: 0x9a8a63, roughness: 1 });
-  const peg = new THREE.MeshStandardMaterial({ color: 0x241a10, roughness: 1 });
+  const fab = new THREE.MeshStandardMaterial({ name: 'TentFabric', color: 0x3a6651, roughness: 0.93, side: THREE.DoubleSide });
+  const fabIn = new THREE.MeshStandardMaterial({ name: 'TentDoorRoll', color: 0x0c1611, roughness: 1, side: THREE.DoubleSide });
+  const rope = new THREE.MeshStandardMaterial({ name: 'Rope', color: 0x9a8a63, roughness: 1 });
+  const peg = new THREE.MeshStandardMaterial({ name: 'TentPeg', color: 0x241a10, roughness: 1 });
   const RIDGE_SAG = 0.075, PANEL_SAG = 0.12, EAVE_FLARE = 0.14;
 
   // 帐布脊线随深度的高度（两端立柱撑起、中段微沉）
@@ -1471,7 +2201,9 @@ function makeTent() {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     geo.setIndex(idx); geo.computeVertexNormals();
-    return new THREE.Mesh(geo, fab);
+    const m = new THREE.Mesh(geo, fab);
+    m.name = side > 0 ? 'TentPanelR' : 'TentPanelL';
+    return m;
   }
   g.add(sidePanel(1), sidePanel(-1));
 
@@ -1479,6 +2211,7 @@ function makeTent() {
   const back = new THREE.Shape();
   back.moveTo(-W / 2, 0); back.lineTo(W / 2, 0); back.lineTo(0, ridgeY(0)); back.closePath();
   const backMesh = new THREE.Mesh(new THREE.ShapeGeometry(back), fab);
+  backMesh.name = 'TentBackWall';
   backMesh.position.z = -D / 2; backMesh.rotation.y = Math.PI;
   g.add(backMesh);
 
@@ -1490,6 +2223,7 @@ function makeTent() {
   hole.moveTo(-dw, 0); hole.lineTo(dw, 0); hole.lineTo(dw * 0.55, dh); hole.lineTo(-dw * 0.55, dh); hole.closePath();
   front.holes.push(hole);
   const frontMesh = new THREE.Mesh(new THREE.ShapeGeometry(front), fab);
+  frontMesh.name = 'TentFrontWall';
   frontMesh.position.z = D / 2;
   g.add(frontMesh);
   // 内壁改为暖色微光：像帐内亮着一盏小灯，从门洞透出。
@@ -1505,16 +2239,19 @@ function makeTent() {
   const inner = new THREE.Mesh(
     new THREE.ShapeGeometry(innerShape),
     new THREE.MeshStandardMaterial({
+      name: 'TentInnerGlow',
       color: 0x30190a, emissive: 0xff9a46, emissiveIntensity: 0.55,
       roughness: 1, side: THREE.DoubleSide
     })
   );
+  inner.name = 'TentInnerWall';
   inner.position.set(0, 0, D / 2 - 0.28);
   g.add(inner);
   // 帐内暖光：不投影的小点光，在门前地面漏出一小片光晕。
   // 注意：不能随道具组显隐——光源数量变化会触发全场景着色器重编译（明显卡顿），
   // 摆放后由 placeProp 调用方把它 attach 到场景根部，收纳时只把强度归零
   const innerGlow = new THREE.PointLight(0xffb26a, 0.9, 2.6, 2);
+  innerGlow.name = 'TentGlow';
   innerGlow.position.set(0, 0.5, D / 2 - 0.3);
   g.add(innerGlow);
   g.userData.innerGlow = innerGlow;
@@ -1522,6 +2259,7 @@ function makeTent() {
   // 门帘卷起横绑在门洞上沿（露营帐"卷门"开放），两侧系带垂下
   const rollLen = dw * 1.5;
   const doorRoll = new THREE.Mesh(new THREE.CapsuleGeometry(0.034, rollLen, 6, 10), fabIn);
+  doorRoll.name = 'TentDoorRoll';
   doorRoll.rotation.z = Math.PI / 2;
   doorRoll.position.set(0, dh - 0.03, D / 2 + 0.035);
   doorRoll.scale.set(1, 1, 0.8);
@@ -1555,8 +2293,9 @@ function makeTent() {
 // 下垂布面座/靠背（帆布中央凹陷）+ 后仰靠背立柱 + 扶手
 function makeChair() {
   const g = new THREE.Group();
-  const frame = new THREE.MeshStandardMaterial({ color: 0x20242a, roughness: 0.6, metalness: 0.3 });
-  const fab = new THREE.MeshStandardMaterial({ color: 0x7a2d2d, roughness: 0.9, side: THREE.DoubleSide });
+  g.name = 'Chair';
+  const frame = new THREE.MeshStandardMaterial({ name: 'ChairFrame', color: 0x20242a, roughness: 0.6, metalness: 0.3 });
+  const fab = new THREE.MeshStandardMaterial({ name: 'ChairFabric', color: 0x7a2d2d, roughness: 0.9, side: THREE.DoubleSide });
   const w = 0.46, d = 0.44, railY = 0.34;
   const V = (x, y, z) => new THREE.Vector3(x, y, z);
   // 布面：四边固定在框架上、中央下垂（与帐篷帆布同思路）
@@ -2022,10 +2761,16 @@ function makeLantern() {
   const steel = new THREE.MeshStandardMaterial({ color: 0x252a2c, roughness: 0.56, metalness: 0.64 });
   const steelDark = new THREE.MeshStandardMaterial({ color: 0x111516, roughness: 0.72, metalness: 0.48 });
   const brass = new THREE.MeshStandardMaterial({ color: 0xa87931, roughness: 0.4, metalness: 0.76 });
+  // 灯罩玻璃只渲染外表面：点光源就在玻璃罩内几厘米处，DoubleSide 时内表面
+  // （法线朝向光源）照度高达数百 lux，整个灯罩过曝成一团白。外表面法线背向灯芯，
+  // 不被自身灯光打亮，透过它看到的是发光的火苗。
+  // 同时去掉 transmission：它会让渲染器每帧额外把整个场景渲染一遍（透射通道），
+  // 为一个十几厘米的小灯罩付出双倍开销，且 0.28 的透射量肉眼几乎不可分辨
   const glassMat = new THREE.MeshPhysicalMaterial({
-    color: 0xffe2ae, transparent: true, opacity: 0.22, transmission: 0.28,
-    thickness: 0.018, roughness: 0.08, metalness: 0,
-    depthWrite: false, side: THREE.DoubleSide
+    name: 'LanternGlass',
+    color: 0xffe2ae, transparent: true, opacity: 0.2,
+    roughness: 0.06, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.05,
+    depthWrite: false, side: THREE.FrontSide
   });
 
   const lathe = (name, points, material, segments = 18) => {
@@ -2116,6 +2861,9 @@ function makeLantern() {
 
   const frameRig = new THREE.Group();
   frameRig.name = 'lanternFrameRig';
+  // 细铁丝框架/护笼/提梁不投影：灯芯就在它们内侧 0.1 m 处，细杆会在地面上
+  // 投出几米长、放射状的硬黑条纹，看起来像渲染错误；只让油壶、灯帽等实体投影
+  frameRig.userData.noCastShadowTree = true;
   g.add(frameRig);
   for (const sx of [-1, 1]) {
     tube(`lanternSideFrame${sx < 0 ? 'L' : 'R'}`, [
@@ -2138,6 +2886,7 @@ function makeLantern() {
 
   const cageRig = new THREE.Group();
   cageRig.name = 'lanternGlobeCage';
+  cageRig.userData.noCastShadowTree = true;
   for (const z of [-0.158, 0.158]) {
     tube(`lanternGuardA${z < 0 ? 'Rear' : 'Front'}`, [
       [-0.13, 0.285, z], [0, 0.39, z], [0.13, 0.5, z]
@@ -2167,6 +2916,7 @@ function makeLantern() {
   wick.position.y = 0.315;
   g.add(wick);
   const glowMat = new THREE.MeshStandardMaterial({
+    name: 'LanternGlow',
     color: 0xffd9a0, emissive: 0xffb259, emissiveIntensity: 2.4, roughness: 0.4
   });
   const globe = new THREE.Group();
@@ -2196,17 +2946,17 @@ function makeLantern() {
 let tentGlow = null;   // 帐内暖光（挂在场景根部，收纳道具时仅归零强度，防止灯数变化触发重编译）
 {
   const tent = makeTent();
-  placeProp(tent, 2.30, 3.1, true);                // 帐篷：左后方
+  placeProp(tent, 2.30, 3.1, true, 'tent');        // 帐篷：左后方
   tent.updateMatrixWorld(true);
   tentGlow = tent.userData.innerGlow;
   scene.attach(tentGlow);                          // 保持世界位置不变，脱离道具组
-  placeProp(makeChair(), 0.15, 1.95, true);        // 折叠椅：右侧，面向火
-  placeProp(makeBackpack(), 0.62, 2.15, true);     // 背包：椅旁
+  placeProp(makeChair(), 0.15, 1.95, true, 'chair');        // 折叠椅：右侧，面向火
+  placeProp(makeBackpack(), 0.62, 2.15, true, 'backpack');  // 背包：椅旁
   const lant = makeLantern();
   lant.group.scale.setScalar(0.58);                // 约为背包高度的 58%，符合便携煤油灯比例
-  placeProp(lant.group, 1.25, 2.5, true);          // 提灯：左侧前景
+  placeProp(lant.group, 1.25, 2.5, true, 'lantern');        // 提灯：左侧前景
   lant.globe.getWorldPosition(campLight.position); // 点光对齐灯芯世界坐标
-  campLight.intensity = 4.5;
+  campLight.intensity = LANTERN_INT;
   // 炊具由并行实现的「煮水」水壶三脚架（kettleRig）承担，此处不再重复造一套
 }
 
@@ -2227,6 +2977,50 @@ function triNoise(x, y, z, seed = 0) {
        + Math.sin(y * 2.9 + seed * 7.3 + Math.sin(x * 1.9 + seed * 1.3)) * 0.3
        + Math.sin(z * 3.7 + seed * 3.1 + Math.sin(y * 2.7 + seed * 2.1)) * 0.2;
 }
+
+// 2D 梯度噪声（Perlin 式，整数哈希取梯度方向）：地形/山体专用。
+// triNoise 是叠加正弦，大范围会出现明显周期条纹；山脊需要无周期、各向同性的噪声
+function hash2i(ix, iz, seed) {
+  let h = Math.imul(ix | 0, 374761393) ^ Math.imul(iz | 0, 668265263) ^ Math.imul(seed | 0, 1274126177);
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+function gradNoise2(x, z, seed = 0) {
+  const ix = Math.floor(x), iz = Math.floor(z);
+  const fx = x - ix, fz = z - iz;
+  const ux = fx * fx * fx * (fx * (fx * 6 - 15) + 10);
+  const uz = fz * fz * fz * (fz * (fz * 6 - 15) + 10);
+  const g = (cx, cz) => {
+    const a = hash2i(cx, cz, seed) * Math.PI * 2;
+    return Math.cos(a) * (x - cx) + Math.sin(a) * (z - cz);
+  };
+  const n0 = g(ix, iz) + (g(ix + 1, iz) - g(ix, iz)) * ux;
+  const n1 = g(ix, iz + 1) + (g(ix + 1, iz + 1) - g(ix, iz + 1)) * ux;
+  return (n0 + (n1 - n0) * uz) * 1.41;                 // ≈ [-1, 1]
+}
+// 分形布朗运动：起伏的丘陵/地表
+function fbm2(x, z, seed = 0, oct = 5) {
+  let s = 0, a = 0.5, f = 1, n = 0;
+  for (let i = 0; i < oct; i++) {
+    s += a * gradNoise2(x * f, z * f, seed + i * 17);
+    n += a; a *= 0.5; f *= 2.03;
+  }
+  return s / n;
+}
+// 脊状多重分形：1-|n| 取平方形成尖锐山脊，每层按上一层结果加权——
+// 山脊处细节丰富、山谷平缓，比"球体加噪声"更像真实山体
+function ridged2(x, z, seed = 0, oct = 5) {
+  let s = 0, a = 0.5, f = 1, w = 1, n = 0;
+  for (let i = 0; i < oct; i++) {
+    let v = 1 - Math.abs(gradNoise2(x * f, z * f, seed + i * 31));
+    v *= v * w;
+    w = Math.min(1, Math.max(0, v * 1.8));
+    s += v * a; n += a; a *= 0.5; f *= 2.07;
+  }
+  return s / n;
+}
+// 两方位角之差，归一到 [-π, π]
+function angDiff(a, b) { return Math.atan2(Math.sin(a - b), Math.cos(a - b)); }
 
 // 岩石/灌木几何：细分二十面体 + 双频噪声径向位移（先焊合顶点，位移后法线平滑）
 function makeRockGeometry(radius, seed, rough = 0.26) {
@@ -2269,6 +3063,7 @@ function makeLogGeometry(rTop, rBot, len, seed) {
    篝火：石圈、木柴、火光
    ============================================================ */
 const fireGroup = new THREE.Group();
+fireGroup.name = 'FirePit';
 scene.add(fireGroup);
 const FIRE_POS = new THREE.Vector3(0, 0.55, 0);   // 火焰声学/光学中心
 
@@ -2351,7 +3146,9 @@ function loadPbrTextures(name, repeat) {
       roughness: 0.92,
       vertexColors: true
     });
+    rockMat.name = `FireStone_${i}`;
     const rock = new THREE.Mesh(geo, rockMat);
+    rock.name = `FireStone_${i}`;
     rock.position.set(Math.cos(a) * 0.98, 0.085, Math.sin(a) * 0.98);   // 略下沉，底部融进土里
     rock.scale.set(1 + rng() * 0.3, 0.72, 1);
     rock.castShadow = true;
@@ -2367,7 +3164,7 @@ const BARK_FRESH = new THREE.Color(0x33200f), BARK_CHAR = new THREE.Color(0x0c08
 const teepeeLogs = [];
 let logEndMat;   // 年轮端面材质（新加的柴也用）
 {
-  barkMat = new THREE.MeshStandardMaterial({ color: BARK_FRESH.clone(), roughness: 0.95 });
+  barkMat = new THREE.MeshStandardMaterial({ name: 'FirewoodBark', color: BARK_FRESH.clone(), roughness: 0.95 });
   // 树皮凹凸贴图：纵向皮条 + 横向细裂（凹凸随 barkMat 颜色炭化依然有效）
   {
     const cv = document.createElement('canvas'); cv.width = cv.height = 256;
@@ -2411,10 +3208,10 @@ let logEndMat;   // 年轮端面材质（新加的柴也用）
     }
     const t = new THREE.CanvasTexture(cv);
     t.colorSpace = THREE.SRGBColorSpace;
-    logEndMat = new THREE.MeshStandardMaterial({ map: t, roughness: 0.9 });
+    logEndMat = new THREE.MeshStandardMaterial({ name: 'LogEndGrain', map: t, roughness: 0.9 });
   }
   charMat = new THREE.MeshStandardMaterial({
-    color: 0x140a05, emissive: 0xff4a10, emissiveIntensity: 1.4, roughness: 1
+    name: 'Charcoal', color: 0x140a05, emissive: 0xff4a10, emissiveIntensity: 1.4, roughness: 1
   });
   // 炭段发光改为龟裂亮纹（暗底 + 白裂缝的 emissiveMap），
   // 比整段均匀发光更像烧透的木炭；亮度仍由 step() 里的 emissiveIntensity 驱动
@@ -2453,6 +3250,7 @@ let logEndMat;   // 年轮端面材质（新加的柴也用）
     const len = dir.length();
     const radius = 0.062 + rng() * 0.022;
     const log = new THREE.Group();
+    log.name = `TeepeeLog_${i}`;
     log.position.copy(outer);
     const ndir = dir.clone().normalize();
     log.quaternion.setFromUnitVectors(up, ndir);
@@ -2489,7 +3287,9 @@ const emberBed = [];
       emissive: new THREE.Color().setHSL(0.03 + rng() * 0.05, 1.0, 0.42 + rng() * 0.14),
       emissiveIntensity: 0.9 + rng() * 1.6
     });
+    mat.name = 'Ember';
     const c = new THREE.Mesh(new THREE.IcosahedronGeometry(0.034 + rng() * 0.05, 0), mat);
+    c.name = `Ember_${i}`;
     c.position.set(Math.cos(a) * rr, 0.025 + rng() * 0.045, Math.sin(a) * rr);
     c.rotation.set(rng() * 3, rng() * 3, rng() * 3);
     c.scale.y = 0.55;
@@ -2522,14 +3322,21 @@ fireLight.castShadow = true;
 fireLight.shadow.mapSize.set(1024, 1024);   // 较低分辨率让 PCF 影缘更宽更柔
 fireLight.shadow.camera.near = 0.2;
 fireLight.shadow.camera.far = 35;
-fireLight.shadow.bias = -0.005;
-fireLight.shadow.normalBias = 0.04;
+fireLight.shadow.bias = -0.003;
+// normalBias 0.04 过大：石块/木柴贴地处影子被整体推离物体（peter-panning），
+// 物体像悬浮在地面上；0.02 仍足以压住曲面上的阴影条纹
+fireLight.shadow.normalBias = 0.02;
+// 火焰是有体积的光源，影子本应有较宽半影；点光阴影的 PCF 采样半径随 radius 放大，
+// 石圈投在地上的放射状"花瓣"硬影因此变柔
+fireLight.shadow.radius = 2.5;
+fireLight.name = 'FireLight';
 fireGroup.add(fireLight);
 
 // 无影补光：与主光同位置、约 28% 强度、不投影。火焰是"体积光源"，
 // 石块影子本应有宽半影并被环境反弹填充——补光把死黑的放射硬影
 // 提亮成柔和半影，总照度与原先持平（48 × 1.28 ≈ 62）
 const fireFill = new THREE.PointLight(0xff8a38, 13, 0, 2);
+fireFill.name = 'FireFill';
 fireFill.position.copy(FIRE_POS);
 fireGroup.add(fireFill);
 
@@ -2540,11 +3347,12 @@ fireGroup.add(fireFill);
    ============================================================ */
 {
   const pileWood = new THREE.MeshStandardMaterial({
-    color: 0x4a2f17, roughness: 0.95, bumpMap: barkMat.bumpMap, bumpScale: 0.012
+    name: 'StackedWood', color: 0x4a2f17, roughness: 0.95, bumpMap: barkMat.bumpMap, bumpScale: 0.012
   });
   // 柴垛：两层交错码放的短柴，两端年轮面朝外
   function makeWoodPile() {
     const g = new THREE.Group();
+    g.name = 'WoodPile';
     const rng = mulberry32(71);
     let n = 0;
     for (let row = 0; row < 2; row++) {
@@ -2553,6 +3361,7 @@ fireGroup.add(fireFill);
         const len = 0.56 + rng() * 0.12;
         const rad = 0.052 + rng() * 0.016;
         const one = new THREE.Group();
+        one.name = `SplitLog_${n}`;
         one.position.set(
           (rng() - 0.5) * 0.05,
           rad + row * 0.095,
@@ -2577,7 +3386,9 @@ fireGroup.add(fireFill);
   // 树桩：劈柴用的矮木桩，顶面年轮，斜劈进一把斧头
   function makeStump() {
     const g = new THREE.Group();
+    g.name = 'ChopStump';
     const stump = new THREE.Mesh(makeLogGeometry(0.16, 0.185, 0.34, 77), pileWood);
+    stump.name = 'Stump';
     stump.position.y = 0.17;
     g.add(stump);
     const top = new THREE.Mesh(new THREE.CircleGeometry(0.148, 14), logEndMat);
@@ -2585,21 +3396,22 @@ fireGroup.add(fireFill);
     top.position.y = 0.342;
     g.add(top);
     const axe = new THREE.Group();
+    axe.name = 'Axe';                       // 覆盖加载时按此名找回斧头（劈柴动画要抡它）
     const handle = new THREE.Mesh(
       new THREE.CylinderGeometry(0.013, 0.016, 0.44, 7),
-      new THREE.MeshStandardMaterial({ color: 0x6d4a26, roughness: 0.9 })
+      new THREE.MeshStandardMaterial({ name: 'AxeHandle', color: 0x6d4a26, roughness: 0.9 })
     );
     handle.position.y = 0.2;
     axe.add(handle);
     const head = new THREE.Mesh(
       new THREE.BoxGeometry(0.042, 0.055, 0.12),
-      new THREE.MeshStandardMaterial({ color: 0x33383e, metalness: 0.75, roughness: 0.35 })
+      new THREE.MeshStandardMaterial({ name: 'AxeHead', color: 0x33383e, metalness: 0.75, roughness: 0.35 })
     );
     head.position.set(0, 0, 0.025);
     axe.add(head);
     const blade = new THREE.Mesh(
       new THREE.BoxGeometry(0.011, 0.06, 0.05),
-      new THREE.MeshStandardMaterial({ color: 0x9aa3ab, metalness: 0.85, roughness: 0.25 })
+      new THREE.MeshStandardMaterial({ name: 'AxeBlade', color: 0x9aa3ab, metalness: 0.85, roughness: 0.25 })
     );
     blade.position.set(0, -0.014, 0.098);
     axe.add(blade);
@@ -2612,7 +3424,8 @@ fireGroup.add(fireFill);
   // 搪瓷杯：珐琅白杯身 + 深色包边 + 环形把手
   function makeMug() {
     const g = new THREE.Group();
-    const enamel = new THREE.MeshStandardMaterial({ color: 0xdfe4e6, roughness: 0.35, metalness: 0.1 });
+    g.name = 'Mug';
+    const enamel = new THREE.MeshStandardMaterial({ name: 'Enamel', color: 0xdfe4e6, roughness: 0.35, metalness: 0.1 });
     const body = new THREE.Mesh(new THREE.CylinderGeometry(0.042, 0.038, 0.085, 12), enamel);
     body.position.y = 0.0425;
     g.add(body);
@@ -2629,10 +3442,10 @@ fireGroup.add(fireFill);
     g.add(handle);
     return g;
   }
-  placeProp(makeWoodPile(), 2.95, 2.7, true);   // 柴垛：帐篷旁的后侧
+  placeProp(makeWoodPile(), 2.95, 2.7, true, 'woodpile');   // 柴垛：帐篷旁的后侧
   chopRig = makeStump();
-  placeProp(chopRig, -0.95, 2.45, true);        // 劈柴桩：火把架外侧
-  placeProp(makeMug(), 0.34, 1.5, true);        // 搪瓷杯：折叠椅脚边
+  placeProp(chopRig, -0.95, 2.45, true, 'stump');           // 劈柴桩：火把架外侧
+  placeProp(makeMug(), 0.34, 1.5, true, 'mug');             // 搪瓷杯：折叠椅脚边
 }
 
 /* ============================================================
@@ -4618,6 +5431,16 @@ const I18N = {
     moonInt: '月光强度',
     fog: '雾浓度',
     exposure: '曝光',
+    gBlender: 'Blender 模型',
+    exportGlb: '导出 .glb',
+    exportTip: '导出为 glTF 2.0 二进制（.glb），Blender：文件 ▸ 导入 ▸ glTF 2.0。微调后以同名 .glb 放入 assets/models/ 并在 models.json 中启用，即可替换场景中的模型',
+    exporting: '正在导出…',
+    exportDone: k => `已导出 ${k}.glb —— 用 Blender 导入 glTF 2.0 打开`,
+    exportFail: '导出失败（详见浏览器控制台）',
+    m_scene: '整个场景（当前）', m_terrain: '地形', m_mountains: '远山（森林）', m_coast: '海岸丘陵与礁岛',
+    m_spruce: '云杉', m_pine: '松树', m_palm: '棕榈', m_tent: '帐篷', m_chair: '折叠椅',
+    m_backpack: '背包', m_lantern: '提灯', m_woodpile: '柴垛', m_stump: '劈柴桩与斧头',
+    m_mug: '搪瓷杯', m_firepit: '火堆（石圈与木柴）',
     hudFuel: (ft, fx) => ` · 燃料 +${ft}（火力 ×${fx}）`,
     hud: (d, w, wm, fuel) =>
       `距火堆 r = ${d} m · 瞬时风速 ${w} m/s（均值 ${wm}）${fuel}\n` +
@@ -4688,6 +5511,16 @@ const I18N = {
     moonInt: 'Moonlight',
     fog: 'Fog density',
     exposure: 'Exposure',
+    gBlender: 'Blender models',
+    exportGlb: 'Export .glb',
+    exportTip: 'Export as glTF 2.0 binary (.glb); in Blender use File ▸ Import ▸ glTF 2.0. After tweaking, save it under the same name in assets/models/ and enable it in models.json to replace the in-scene model',
+    exporting: 'Exporting…',
+    exportDone: k => `Exported ${k}.glb — open it in Blender via Import ▸ glTF 2.0`,
+    exportFail: 'Export failed (see browser console)',
+    m_scene: 'Whole scene (current)', m_terrain: 'Terrain', m_mountains: 'Mountains (forest)', m_coast: 'Coast hills & islets',
+    m_spruce: 'Spruce', m_pine: 'Pine', m_palm: 'Palm', m_tent: 'Tent', m_chair: 'Folding chair',
+    m_backpack: 'Backpack', m_lantern: 'Lantern', m_woodpile: 'Woodpile', m_stump: 'Chopping stump & axe',
+    m_mug: 'Enamel mug', m_firepit: 'Fire pit (stones & logs)',
     hudFuel: (ft, fx) => ` · fuel +${ft} (fire ×${fx})`,
     hud: (d, w, wm, fuel) =>
       `Distance to fire r = ${d} m · wind ${w} m/s (mean ${wm})${fuel}\n` +
@@ -4758,6 +5591,16 @@ const I18N = {
     moonInt: '月光の強さ',
     fog: '霧の濃さ',
     exposure: '露出',
+    gBlender: 'Blender モデル',
+    exportGlb: '.glb 書き出し',
+    exportTip: 'glTF 2.0 バイナリ（.glb）として書き出します。Blender ではファイル ▸ インポート ▸ glTF 2.0。調整後は同じ名前で assets/models/ に置き、models.json で有効にするとシーンのモデルが置き換わります',
+    exporting: '書き出し中…',
+    exportDone: k => `${k}.glb を書き出しました —— Blender の glTF 2.0 インポートで開けます`,
+    exportFail: '書き出しに失敗しました（ブラウザのコンソールを参照）',
+    m_scene: 'シーン全体（現在）', m_terrain: '地形', m_mountains: '遠くの山（森）', m_coast: '海岸の丘と岩礁',
+    m_spruce: 'トウヒ', m_pine: 'マツ', m_palm: 'ヤシ', m_tent: 'テント', m_chair: '折りたたみ椅子',
+    m_backpack: 'バックパック', m_lantern: 'ランタン', m_woodpile: '薪の山', m_stump: '薪割り台と斧',
+    m_mug: 'ホーローマグ', m_firepit: '焚き火（石と薪）',
     hudFuel: (ft, fx) => ` · 燃料 +${ft}（火力 ×${fx}）`,
     hud: (d, w, wm, fuel) =>
       `焚き火まで r = ${d} m · 瞬間風速 ${w} m/s（平均 ${wm}）${fuel}\n` +
@@ -4831,14 +5674,16 @@ for (const btn of langBtns) btn.addEventListener('click', () => applyLang(btn.da
    场景切换（森林 / 海边）：环境组显隐 + 夜色微调 + 声景渐变
    ============================================================ */
 const sceneBtns = [...document.querySelectorAll('#sceneSwitch button')];
-const SCENE_BG = { forest: NIGHT, beach: 0x0a1424 };   // 海边夜色偏蓝一分
 function applyScene(mode, opts = {}) {
   sceneMode = mode;
   const beach = mode === 'beach';
   forestEnv.visible = !beach;
   beachEnv.visible = beach;
-  scene.background.setHex(SCENE_BG[mode]);
-  scene.fog.color.setHex(SCENE_BG[mode]);
+  // 天穹与雾同步换色（海边夜色偏蓝一分）；雾色始终 = 地平线色，远景无缝融入
+  scene.background.setHex(SKY[mode].zenith);
+  scene.fog.color.setHex(SKY[mode].horizon);
+  skyDome.material.uniforms.uZenith.value.setHex(SKY[mode].zenith);
+  skyDome.material.uniforms.uHorizon.value.setHex(SKY[mode].horizon);
   for (const b of sceneBtns) b.classList.toggle('active', b.dataset.scene === mode);
   if (audio) audio.waveMix.gain.setTargetAtTime(beach ? 1 : 0, audio.ctx.currentTime, 1.2);
   if (!opts.silent) showActivityMessage(beach ? 'sceneToBeach' : 'sceneToForest', 3.5);
@@ -4873,6 +5718,7 @@ let windVX = 0.19, windVZ = 0.10;   // 风矢量 = windNow×(cos,sin)，供火�
 let rainNow = 0, cloudNow = 0.25;   // 平滑后的天气量（追随 P.rain / P.cloud）
 let lastMoonPhase = -1;             // 月相变化时才重算太阳方向
 let hudTimer = 0;
+const _airGlow = new THREE.Color();
 
 function animate() {
   requestAnimationFrame(animate);
@@ -4930,11 +5776,22 @@ function step(dt, t) {
     c.sprite.material.opacity = Math.min(0.95, c.baseOp * (0.5 + 1.5 * cloudNow));
   }
   moonLight.intensity = P.moonInt * (1 - 0.7 * cloudNow);      // 云厚则月光与月面压暗
+  // 天光随月光强度联动（满月夜更亮），云层遮挡时减弱；月亮方位的天空辉光同步。
+  // 饱和曲线：默认 0.12 → 1.05，滑块拉满 0.6 → 1.57（线性时高达 3.45，浅色沙滩过曝发白）
+  const mk = 6 * P.moonInt;
+  hemiLight.intensity = (0.45 + 1.43 * mk / (1 + mk)) * (1 - 0.35 * cloudNow);
+  skyDome.material.uniforms.uGlowK.value = (1 - 0.6 * cloudNow) * Math.min(1.5, P.moonInt / 0.12);
+  if (moonMat) {                                               // 与天穹着色器同一公式取月亮方向天空色
+    const su = skyDome.material.uniforms;
+    moonMat.uniforms.uAir.value.copy(su.uHorizon.value)
+      .lerp(su.uZenith.value, Math.pow(Math.max(moonDir.y, 0), 0.42))
+      .add(_airGlow.copy(su.uGlow.value).multiplyScalar(0.85 * su.uGlowK.value));
+  }
   if (moonMat)  moonMat.uniforms.uDim.value = 1 - 0.7 * cloudNow;
   if (moonHalo) moonHalo.material.opacity = 1 - 0.6 * cloudNow;
   // 提灯：稳定暖光中带极轻摇曳
   const lanternFlick = 0.9 + 0.07 * Math.sin(t * 6.3) + 0.03 * Math.sin(t * 23.1);
-  campLight.intensity = campTidied ? 0 : 4.5 * lanternFlick;
+  campLight.intensity = campTidied ? 0 : LANTERN_INT * lanternFlick;
   if (lanternGlowMat) lanternGlowMat.emissiveIntensity = 2.4 * lanternFlick;
   charMat.emissiveIntensity = (0.35 + 1.35 * fireHealth) * (0.8 + 0.55 * flick);   // 炭随火势冷却变暗
   emberGlow.material.opacity = (0.3 + 0.55 * fireHealth) * (0.6 + 0.5 * flick);
@@ -5392,6 +6249,405 @@ function unlockBirthdaySettings() {
   const gear = $('bdayGear'); if (gear) gear.addEventListener('click', open);
 }
 
+/* ============================================================
+   🧊 Blender 互通：glTF 2.0（.glb）导出 + 覆盖加载
+   ------------------------------------------------------------
+   · 导出：参数面板底部「Blender 模型」选择整个场景或单个模型 → 下载 <名称>.glb，
+     Blender 中 File ▸ Import ▸ glTF 2.0 直接打开（米制；Y-up 自动转 Z-up；材质为 Principled BSDF）。
+     导出前先做一次"Blender 友好化"转换（不改动运行中的场景）：
+       - 粒子 / 精灵 / 线段 / 着色器材质 / 叠加发光片（火焰、星空、月亮、碎光等运行时特效）不导出
+       - InstancedMesh 展开为共享同一网格的多个对象（Blender 中为关联复制，改一个全部同步）
+       - 凹凸贴图（glTF 核心规范无 bump）换算为法线贴图
+       - flipY 纹理的法线贴图翻转绿通道（导出器会上下翻转图像，否则 Blender 中凹凸方向反了）
+       - 未使用顶点色的几何去掉 COLOR_0（Blender 会把顶点色乘进底色导致发黑）
+       - flatShading 材质的几何拆成硬边（glTF 没有"平直着色"开关）
+       - 平行光按实际照射方向写入节点朝向（KHR_lights_punctual）；半球光 glTF 无对应，跳过
+       - 未命名对象自动补名，大纲视图可读
+   · 覆盖加载：assets/models/models.json 中把某个模型设为 true，页面启动时用
+     assets/models/<名称>.glb 替换程序化模型（摆放位置 / 缩放 / 动画挂点保持不变）。
+     在 Blender 中微调后按同名导出 .glb 覆盖该文件，刷新页面即可看到效果
+   ============================================================ */
+const MODEL_DIR = 'assets/models/';
+const TEMPLATE_SEED = 11;                 // 树木模板（导出单棵树）使用的固定随机种子
+// 可导出的目标（顺序即下拉菜单顺序）
+const EXPORT_TARGETS = [
+  'scene', 'terrain', 'mountains', 'coast', 'spruce', 'pine', 'palm',
+  'tent', 'chair', 'backpack', 'lantern', 'woodpile', 'stump', 'mug', 'firepit'
+];
+// 可被 Blender 模型覆盖的目标（其余只导出：地形被树木/散布物的落地计算依赖，火堆柴有坍塌动画）
+const OVERRIDABLE = new Set([
+  'mountains', 'coast', 'spruce', 'pine', 'palm',
+  'tent', 'chair', 'backpack', 'lantern', 'woodpile', 'stump', 'mug'
+]);
+
+// 导出源：mode = 'scene' 整个场景 / 'world' 保留世界坐标 / 'local' 以自身原点导出（去掉摆放位移与朝向，保留缩放）
+function exportSource(key) {
+  switch (key) {
+    case 'scene': return { root: scene, mode: 'scene' };
+    case 'terrain': return { root: scene.getObjectByName(sceneMode === 'beach' ? 'BeachTerrain' : 'Terrain'), mode: 'world' };
+    case 'mountains': return { root: mountains, mode: 'world' };
+    case 'coast': return { root: coastHills, mode: 'world' };
+    case 'spruce': case 'pine': return { root: makeConiferGroup(key, TEMPLATE_SEED), mode: 'local', temp: true };
+    case 'palm': return { root: buildPalm(TEMPLATE_SEED), mode: 'local', temp: true };
+    case 'firepit': return { root: fireGroup, mode: 'local' };
+    default: return PROP_GROUPS[key] ? { root: PROP_GROUPS[key], mode: 'local' } : null;
+  }
+}
+
+function isExportableMaterial(m) {
+  if (!m || m.isShaderMaterial || m.isRawShaderMaterial || m.isPointsMaterial || m.isSpriteMaterial || m.isLineBasicMaterial) return false;
+  if (m.blending === THREE.AdditiveBlending) return false;   // 叠加发光特效（湖面/海面碎光、炭床余光等）
+  if (m.transparent && m.opacity < 0.01) return false;       // 当前完全透明的动态特效（蒸汽等）
+  return !!(m.isMeshStandardMaterial || m.isMeshBasicMaterial || m.isMeshLambertMaterial || m.isMeshPhongMaterial);
+}
+
+// 以画布逐像素处理纹理图像（凹凸→法线、法线翻绿通道共用）
+function textureToCanvas(tex, maxSize = 1024) {
+  const img = tex.image;
+  if (!img || !img.width) return null;
+  const w = Math.min(img.width, maxSize), h = Math.min(img.height, maxSize);
+  const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+  const g = cv.getContext('2d', { willReadFrequently: true });
+  g.drawImage(img, 0, 0, w, h);
+  return { cv, g, w, h, data: g.getImageData(0, 0, w, h) };
+}
+function canvasTextureLike(src, cv, suffix) {
+  const t = new THREE.CanvasTexture(cv);
+  t.name = (src.name || 'texture') + suffix;
+  t.wrapS = src.wrapS; t.wrapT = src.wrapT;
+  t.repeat.copy(src.repeat); t.offset.copy(src.offset); t.rotation = src.rotation;
+  t.flipY = src.flipY; t.channel = src.channel;
+  return t;
+}
+// 凹凸（高度）贴图 → 切线空间法线贴图（中心差分）。直接生成 glTF 约定（OpenGL，绿=图像上方），
+// 并预先抵消导出器对 flipY 纹理的上下翻转
+function bumpToNormal(tex, bumpScale, ctx) {
+  const key = `${tex.uuid}:${bumpScale}`;
+  if (ctx.tex.has(key)) return ctx.tex.get(key);
+  const c = textureToCanvas(tex);
+  if (!c) return null;
+  const { w, h, data: { data: d } } = c;
+  const L = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) L[i] = (d[i * 4] + d[i * 4 + 1] + d[i * 4 + 2]) / 765;
+  const k = 3 * THREE.MathUtils.clamp(bumpScale / 0.03, 0.4, 2);
+  const gy = tex.flipY ? -1 : 1;
+  const out = c.g.createImageData(w, h);
+  for (let y = 0; y < h; y++) {
+    const yu = ((y - 1 + h) % h) * w, yd = ((y + 1) % h) * w;
+    for (let x = 0; x < w; x++) {
+      const xl = (x - 1 + w) % w, xr = (x + 1) % w;
+      let nx = -(L[y * w + xr] - L[y * w + xl]) * k;
+      let ny = gy * (L[yu + x] - L[yd + x]) * k;
+      const inv = 1 / Math.hypot(nx, ny, 1);
+      const o = (y * w + x) * 4;
+      out.data[o] = (nx * inv * 0.5 + 0.5) * 255;
+      out.data[o + 1] = (ny * inv * 0.5 + 0.5) * 255;
+      out.data[o + 2] = (inv * 0.5 + 0.5) * 255;
+      out.data[o + 3] = 255;
+    }
+  }
+  c.g.putImageData(out, 0, 0);
+  const t = canvasTextureLike(tex, c.cv, '_normal');
+  ctx.tex.set(key, t);
+  return t;
+}
+function glTFNormalMap(tex, ctx) {
+  if (!tex.flipY) return tex;                   // 未翻转的纹理与 glTF 约定一致，原样导出
+  const key = `${tex.uuid}:flipG`;
+  if (ctx.tex.has(key)) return ctx.tex.get(key);
+  const c = textureToCanvas(tex);
+  if (!c) return tex;
+  const d = c.data.data;
+  for (let i = 1; i < d.length; i += 4) d[i] = 255 - d[i];
+  c.g.putImageData(c.data, 0, 0);
+  const t = canvasTextureLike(tex, c.cv, '_gl');
+  ctx.tex.set(key, t);
+  return t;
+}
+
+function exportMaterial(mat, ctx) {
+  if (ctx.mat.has(mat.uuid)) return ctx.mat.get(mat.uuid);
+  const m = mat.clone();
+  m.name = mat.name || `${mat.type.replace('Material', '')}_${mat.color ? mat.color.getHexString() : 'x'}`;
+  if (m.normalMap) m.normalMap = glTFNormalMap(m.normalMap, ctx);
+  else if (m.bumpMap) {
+    const n = bumpToNormal(m.bumpMap, m.bumpScale, ctx);
+    if (n) { m.normalMap = n; m.normalScale = new THREE.Vector2(1, 1); }
+  }
+  m.bumpMap = null;
+  m.bumpScale = 1;                              // ≠1 时导出器会写 EXT_materials_bump（Blender 不识别）
+  // 只有粗糙度贴图的非金属材质：粗糙度贴图兼作金属度贴图（metallicFactor=0 使其 B 通道不起作用），
+  // 否则导出器会为每个材质各合成一张 metallicRoughness 图（石圈 14 块石头 = 14 张重复大图）
+  if (m.roughnessMap && !m.metalnessMap && m.metalness === 0) m.metalnessMap = m.roughnessMap;
+  ctx.mat.set(mat.uuid, m);
+  return m;
+}
+
+function exportGeometry(geo, mat, ctx) {
+  const key = `${geo.uuid}:${mat.vertexColors ? 'c' : ''}:${mat.flatShading ? 'f' : ''}`;
+  if (ctx.geo.has(key)) return ctx.geo.get(key);
+  let g = new THREE.BufferGeometry();
+  for (const a of ['position', 'normal', 'uv']) if (geo.attributes[a]) g.setAttribute(a, geo.attributes[a]);
+  if (mat.vertexColors && geo.attributes.color) g.setAttribute('color', geo.attributes.color);
+  if (geo.index) g.setIndex(geo.index);
+  if (mat.flatShading) {                        // 拆成独立三角形并重算面法线 = 硬边
+    g = g.index ? g.toNonIndexed() : g.clone();
+    g.deleteAttribute('normal');
+  }
+  if (!g.attributes.normal) g.computeVertexNormals();
+  ctx.geo.set(key, g);
+  return g;
+}
+
+function exportLight(src) {
+  if (!(src.intensity > 0)) return null;
+  let l;
+  if (src.isPointLight) l = new THREE.PointLight(src.color, src.intensity, src.distance, 2);
+  else if (src.isSpotLight) l = new THREE.SpotLight(src.color, src.intensity, src.distance, src.angle, src.penumbra, 2);
+  else if (src.isDirectionalLight) l = new THREE.DirectionalLight(src.color, src.intensity);
+  else return null;                             // Hemisphere / Ambient：glTF 没有对应光源类型
+  l.name = src.name || 'Light';
+  l.position.copy(src.position);
+  if (l.target) {
+    // glTF 平行光/聚光沿节点 -Z 照射：把实际照射方向（光源 → 目标，换算到父节点坐标系）写进节点朝向
+    const dir = src.target.getWorldPosition(new THREE.Vector3()).sub(src.getWorldPosition(new THREE.Vector3())).normalize();
+    if (src.parent) dir.applyQuaternion(src.parent.getWorldQuaternion(new THREE.Quaternion()).invert());
+    l.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, -1), dir);
+    l.add(l.target);
+    l.target.position.set(0, 0, -1);
+  }
+  return l;
+}
+
+// 场景对象 → 导出用的新对象树（共享几何数据，不修改原场景）
+function toExportNode(src, ctx, force = false) {
+  if (!src) return null;
+  if (!force && (!src.visible || src.userData.noExport)) return null;
+  if (src.isPoints || src.isLine || src.isSprite || src.isCamera) return null;
+  if (src.isLight) return exportLight(src);
+  let node;
+  if (src.isMesh) {
+    const mat = src.material;
+    if (Array.isArray(mat) || !isExportableMaterial(mat)) return null;
+    const geo = exportGeometry(src.geometry, mat, ctx), m = exportMaterial(mat, ctx);
+    if (src.isInstancedMesh) {
+      node = new THREE.Group();
+      const mtx = new THREE.Matrix4();
+      for (let i = 0; i < src.count; i++) {
+        src.getMatrixAt(i, mtx);
+        const inst = new THREE.Mesh(geo, m);
+        mtx.decompose(inst.position, inst.quaternion, inst.scale);
+        inst.name = `${src.name || 'Instance'}_${String(i).padStart(3, '0')}`;
+        node.add(inst);
+      }
+    } else {
+      node = new THREE.Mesh(geo, m);
+    }
+  } else {
+    node = new THREE.Group();
+  }
+  node.name = src.name;
+  node.position.copy(src.position);
+  node.quaternion.copy(src.quaternion);
+  node.scale.copy(src.scale);
+  // 阴影开关标记随 glTF extras 带进 Blender（自定义属性），覆盖加载时读回
+  for (const k of ['noCastShadow', 'noCastShadowTree']) if (src.userData[k]) node.userData[k] = true;
+  for (const c of src.children) {
+    const n = toExportNode(c, ctx);
+    if (n) node.add(n);
+  }
+  if (!src.isMesh && !node.children.length && !src.name) return null;   // 空的辅助节点（音源等）
+  return node;
+}
+
+function buildExportTree(key) {
+  const src = exportSource(key);
+  if (!src || !src.root) return null;
+  const ctx = { geo: new Map(), mat: new Map(), tex: new Map() };
+  let root;
+  if (src.mode === 'scene') {
+    root = new THREE.Group();
+    root.name = 'CampfireScene';
+    for (const c of scene.children) {
+      const n = toExportNode(c, ctx);
+      if (n) root.add(n);
+    }
+    const cam = new THREE.PerspectiveCamera(camera.fov, camera.aspect, camera.near, camera.far);
+    cam.name = 'Camera';
+    cam.position.copy(camera.position);
+    cam.quaternion.copy(camera.quaternion);
+    root.add(cam);
+  } else {
+    root = toExportNode(src.root, ctx, true);
+    if (src.mode === 'local') {
+      root.position.set(0, 0, 0);
+      root.quaternion.identity();
+    } else {
+      src.root.updateWorldMatrix(true, false);
+      src.root.matrixWorld.decompose(root.position, root.quaternion, root.scale);
+    }
+  }
+  if (!root.name) root.name = key;
+  // 自动补名：父名_序号，Blender 大纲视图不再是一串 "Mesh.001"
+  root.traverse(o => {
+    o.children.forEach((c, i) => {
+      if (!c.name) c.name = `${o.name}_${c.isMesh ? 'Mesh' : 'Node'}${String(i).padStart(2, '0')}`;
+    });
+  });
+  return { root, ctx, temp: src.temp ? src.root : null };
+}
+
+// 修改 .glb 的 JSON 块并重新打包（GLB = 12 字节头 + JSON 块 + BIN 块，块长 4 字节对齐）
+function patchGLBJson(glb, fn) {
+  const dv = new DataView(glb);
+  const jsonLen = dv.getUint32(12, true);
+  const json = JSON.parse(new TextDecoder().decode(new Uint8Array(glb, 20, jsonLen)));
+  fn(json);
+  const text = new TextEncoder().encode(JSON.stringify(json));
+  const pad = (4 - text.length % 4) % 4;
+  const jsonBytes = new Uint8Array(text.length + pad).fill(0x20);
+  jsonBytes.set(text);
+  const rest = new Uint8Array(glb, 20 + jsonLen);            // BIN 块（含块头）原样保留
+  const out = new Uint8Array(12 + 8 + jsonBytes.length + rest.length);
+  const ov = new DataView(out.buffer);
+  ov.setUint32(0, 0x46546C67, true);                          // 'glTF'
+  ov.setUint32(4, 2, true);
+  ov.setUint32(8, out.length, true);
+  ov.setUint32(12, jsonBytes.length, true);
+  ov.setUint32(16, 0x4E4F534A, true);                         // 'JSON'
+  out.set(jsonBytes, 20);
+  out.set(rest, 20 + jsonBytes.length);
+  return out.buffer;
+}
+
+// 导出为 .glb（ArrayBuffer）；download=true 时触发浏览器下载 <key>.glb
+async function exportGLB(key = 'scene', { download = true } = {}) {
+  const { GLTFExporter } = await import('three/addons/exporters/GLTFExporter.js');
+  const built = buildExportTree(key);
+  if (!built) throw new Error(`unknown export target: ${key}`);
+  let glb;
+  try {
+    glb = await new GLTFExporter().parseAsync(built.root, { binary: true, onlyVisible: true, maxTextureSize: 2048 });
+    glb = patchGLBJson(glb, json => {
+      json.asset.generator = 'Campfire (three.js GLTFExporter r165) — Blender-ready export';
+      if (json.scenes?.[0]) json.scenes[0].name = `Campfire_${key}`;   // 替换导出器默认的 "AuxScene"
+      // r165 导出器把 metallicRoughnessTexture 的 UV 通道写成了非法的 "channel" 字段（应为 texCoord）
+      for (const m of json.materials || []) {
+        const t = m.pbrMetallicRoughness?.metallicRoughnessTexture;
+        if (t && 'channel' in t) { t.texCoord = t.channel; delete t.channel; }
+      }
+    });
+  } finally {
+    if (built.temp) built.temp.traverse(o => { if (o.isMesh) o.geometry.dispose(); });
+    for (const t of built.ctx.tex.values()) t.dispose();
+  }
+  if (download) {
+    const url = URL.createObjectURL(new Blob([glb], { type: 'model/gltf-binary' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = `${key}.glb`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  }
+  return glb;
+}
+
+/* —— 覆盖加载：Blender 编辑后的 .glb 替换程序化模型 —— */
+function disposeReplaced(o) {
+  // 只释放几何（材质/贴图可能与其它对象共享，交给 GC）
+  o.traverse(c => { if (c.isMesh) c.geometry.dispose(); });
+}
+function overrideTree(species, tpl) {
+  tpl.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = !/foliage|frond/i.test(o.name); } });
+  for (const t of trees) {
+    if (t.species !== species) continue;
+    const old = t.g.children.find(c => c.userData.treeTemplate === species);
+    if (old) { t.g.remove(old); disposeReplaced(old); }
+    const inst = tpl.clone();
+    inst.userData.treeTemplate = species;
+    t.g.add(inst);
+  }
+  if (species === 'palm') return;
+  // 背景林：按模板的每个网格重建 InstancedMesh，沿用原有实例矩阵
+  const olds = forestBackdrop.children.filter(c => c.userData.treeTemplate === species);
+  tpl.updateMatrixWorld(true);
+  const parts = [];
+  tpl.traverse(o => { if (o.isMesh) parts.push(o); });
+  for (const src of olds.filter(c => c.name.endsWith('_Trunk'))) {
+    const m = new THREE.Matrix4();
+    const mats = [];
+    for (let i = 0; i < src.count; i++) { src.getMatrixAt(i, m); mats.push(m.clone()); }
+    for (const part of parts) {
+      const im = new THREE.InstancedMesh(part.geometry.clone().applyMatrix4(part.matrixWorld), part.material, mats.length);
+      mats.forEach((mm, i) => im.setMatrixAt(i, mm));
+      im.name = `Backdrop_${species}_${part.name}`;
+      im.userData.treeTemplate = species;
+      im.computeBoundingSphere();
+      forestBackdrop.add(im);
+    }
+  }
+  for (const o of olds) { forestBackdrop.remove(o); o.geometry.dispose(); o.dispose(); }
+}
+// 远景（山体/海岸）：整组替换；与程序化版本一致，不投影不受影（远在火光阴影范围外）
+function overrideDistant(group, loaded) {
+  for (const c of [...group.children]) { group.remove(c); disposeReplaced(c); }
+  loaded.traverse(o => { if (o.isMesh) { o.castShadow = o.receiveShadow = false; applyDistantFog(o.material); } });
+  group.add(loaded);
+}
+function overrideProp(key, loaded) {
+  const group = PROP_GROUPS[key];
+  if (!group) return;
+  const oldAxe = key === 'stump' ? group.userData.axe : null;
+  // 保留运行时挂在道具下的对象（劈柴的原木与碎屑）
+  const keep = new Set([chopLog, ...chopDebris.map(d => d.mesh)]);
+  for (const c of [...group.children]) {
+    if (keep.has(c)) continue;
+    group.remove(c);
+    if (c !== oldAxe) disposeReplaced(c);
+  }
+  group.scale.set(1, 1, 1);                    // 导出时根节点已带上原缩放（如提灯 0.58）
+  group.add(loaded);
+  if (key === 'stump') {
+    const axe = loaded.getObjectByName('Axe');
+    if (axe) group.userData.axe = axe;
+    else if (oldAxe) group.add(oldAxe);       // 模型里没有斧头：保留程序化斧头，劈柴动画照常
+  }
+  if (key === 'lantern') {
+    group.updateMatrixWorld(true);
+    const sock = loaded.getObjectByName('lanternLightSocket');
+    if (sock) sock.getWorldPosition(campLight.position);   // 灯光对齐新模型的灯芯挂点
+    loaded.traverse(o => { if (o.isMesh && o.material.name === 'LanternGlow') lanternGlowMat = o.material; });
+  }
+  applyPropShadows(group);   // GLTFLoader 把 glTF extras 放进 userData：noCastShadow 等标记随 Blender 往返保留
+}
+function applyModelOverride(key, loaded) {
+  if (key === 'spruce' || key === 'pine' || key === 'palm') overrideTree(key, loaded);
+  else if (key === 'mountains' || key === 'coast') overrideDistant(key === 'mountains' ? mountains : coastHills, loaded);
+  else overrideProp(key, loaded);
+}
+async function loadModelOverrides() {
+  let cfg;
+  try {
+    const r = await fetch(MODEL_DIR + 'models.json', { cache: 'no-cache' });
+    if (!r.ok) return;
+    cfg = await r.json();
+  } catch { return; }                           // 无配置文件 / file:// 打开：保持程序化模型
+  const use = cfg.use || {};
+  const keys = Object.keys(use).filter(k => use[k] && OVERRIDABLE.has(k));
+  if (!keys.length) return;
+  const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
+  const loader = new GLTFLoader();
+  for (const key of keys) {
+    const file = typeof use[key] === 'string' ? use[key] : `${key}.glb`;
+    try {
+      const gltf = await loader.loadAsync(MODEL_DIR + file);
+      applyModelOverride(key, gltf.scene);
+      console.info(`[models] ${key} ← ${MODEL_DIR}${file}`);
+    } catch (e) {
+      console.warn(`[models] ${key}: 加载 ${MODEL_DIR}${file} 失败，保留程序化模型`, e);
+    }
+  }
+}
+
 // 启动前预编译全部材质（含当前隐藏的水壶/支架/蒸汽等）：
 // 首次点燃火把、煮水等交互不再因着色器即时编译而掉帧
 renderer.compile(scene, camera);
@@ -5465,6 +6721,43 @@ animate();
     }
   }
 
+  // 🧊 Blender 模型导出：选择目标 → 下载 <名称>.glb
+  {
+    const h = document.createElement('div');
+    h.className = 'pgroup';
+    bindText(h, 'gBlender');
+    const row = document.createElement('div');
+    row.className = 'bl-row';
+    const sel = document.createElement('select');
+    sel.id = 'exportTarget';
+    for (const k of EXPORT_TARGETS) {
+      const o = document.createElement('option');
+      o.value = k;
+      bindText(o, 'm_' + k);
+      sel.appendChild(o);
+    }
+    const btn = document.createElement('button');
+    btn.id = 'exportBtn';
+    bindText(btn, 'exportGlb');
+    bindTip(btn, 'exportTip');
+    const note = document.createElement('div');
+    note.className = 'bl-note';
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      note.textContent = tr('exporting');
+      try {
+        await exportGLB(sel.value);
+        note.textContent = tr('exportDone')(sel.value);
+      } catch (e) {
+        console.error(e);
+        note.textContent = tr('exportFail');
+      }
+      btn.disabled = false;
+    });
+    row.append(sel, btn);
+    body.append(h, row, note);
+  }
+
   const panel = document.getElementById('panel');
   const arrow = document.getElementById('panelArrow');
   document.getElementById('panelHead').addEventListener('click', () => {
@@ -5490,10 +6783,14 @@ applyLang(lang);
 window.__campfire = {
   renderer, scene, camera, step, P, applyLang, applyScene, tossLog, activateBirthday,
   startRoasting, startKettle, toggleTorch, throwPinecone, startChopping, tidyCampItems, placeCampItems,
+  exportGLB, loadModelOverrides, EXPORT_TARGETS,
   isCampTidied: () => campTidied,
   getFuel: () => ({ fuel, fuelTarget, fireHealth, fireDrive, collapseAmt }) };
 
 addEventListener('resize', fitViewport);
+
+// Blender 编辑过的模型（assets/models/models.json 中启用的）在场景就绪后替换程序化模型
+loadModelOverrides();
 </script>
 </body>
 </html>

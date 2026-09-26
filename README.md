@@ -33,6 +33,13 @@ It is suitable for learning and experimenting with:
 
 The scene contains flames, logs, sparks, smoke, moonlight, fog, cloud cover, light rain, and a dark outdoor environment.
 
+The natural environment is fully procedural:
+
+- **Conifers**: spruce (drooping whorled tiers with pointed branch tips) and pine (tall trunk with a clumped crown); trunks run through the crown with root flare and a bark texture, plus an instanced mid-distance backdrop forest
+- **Mountains**: a full ring of ridged-multifractal ranges that joins the ground seamlessly, colored by altitude and slope (forest belt, rock, snow); kept low toward the moon/lake so the moon stays visible
+- **Terrain**: gradient-noise fBm relief; the camp and lake stay flat and the forest floor rises toward the foothills
+- **Beach**: coastal hills that slope into the sea as headlands, rocky islets, and pinnate-frond palms
+
 ### Real-time Parameter Panel
 
 The upper-right parameter panel provides real-time sliders for:
@@ -152,6 +159,51 @@ After entering the page, click anywhere to enable audio. Most browsers require a
 
 ---
 
+## Blender Interop
+
+Models can be exported as **glTF 2.0 (.glb)**, opened and tweaked in Blender, and then loaded back into the page in place of the procedural models.
+
+### 1. Export
+
+At the bottom of the parameter panel, **"Blender models"**: pick a target → click **Export .glb** to download `<name>.glb`.
+
+| Target | Contents | Can be loaded back |
+|---|---|---|
+| Whole scene (current) | Current forest/beach environment + camp + fire + lights + camera | — |
+| Terrain | Ground mesh of the current scene | — |
+| Mountains (forest) / Coast hills & islets | Distant ranges + treeline silhouettes | ✓ |
+| Spruce / Pine / Palm | One tree template (root at origin, ~7–9 m tall) | ✓ replaces every tree of that species |
+| Tent / Chair / Backpack / Lantern / Woodpile / Stump & axe / Mug | A single prop (exported around its own origin) | ✓ |
+| Fire pit | Stones, logs, embers | — (the logs have a collapse animation) |
+
+`assets/models/` already contains `.glb` files for the 12 overridable models, ready to open in Blender.
+
+### 2. Open in Blender
+
+`File ▸ Import ▸ glTF 2.0 (.glb/.gltf)`. Units are meters, Y-up is converted to Blender's Z-up, and materials become Principled BSDF. The export is prepared for Blender:
+
+- Runtime effects (flame particles, stars, moon, glints) are skipped
+- Instanced objects (backdrop forest, pebbles…) become **linked duplicates** — edit one, all update
+- Bump maps are converted to normal maps; normal-map green channels follow the glTF convention
+- Trees and mountains use **vertex colors** for shading depth (a Color Attribute node in the material)
+- Objects and materials have readable names (e.g. `Tree_spruce_03 › Spruce › Foliage`, `TentFabric`)
+
+### 3. Load your edits back
+
+1. In Blender, `File ▸ Export ▸ glTF 2.0`, format **glTF Binary (.glb)**, saved under the **same name** in `assets/models/` (e.g. `tent.glb`)
+2. Edit `assets/models/models.json` and set that entry to `true` (or a file name, e.g. `"tent": "tent_v2.glb"`)
+3. Reload the page (served over HTTP). The browser console prints `[models] tent ← assets/models/tent.glb`
+
+Notes:
+
+- **Keep the root at the origin**: placement and orientation are decided by the page; the file only describes the model
+- Lantern: the light anchor is an empty named `lanternLightSocket`, and the flame material is `LanternGlow` (used by the flicker)
+- Stump: the axe object is named `Axe` (used by the chopping animation); if removed, the procedural axe is kept
+- Enable `Include ▸ Custom Properties` when exporting to keep shadow flags such as `noCastShadow`
+- Light units differ from Blender's; if an imported full scene looks too dark or bright, adjust `Lighting Mode` in the import options
+
+---
+
 ## Project Structure
 
 ```text
@@ -161,7 +213,8 @@ Campfire/
 ├── README.zh-CN.md
 ├── README.ja.md
 ├── assets/
-│   └── textures/
+│   ├── textures/
+│   └── models/          # Blender-ready .glb files + models.json (override switches)
 ├── scripts/
 └── .claude/
 ```
