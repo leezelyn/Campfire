@@ -175,7 +175,7 @@ Real-world camp props are being upgraded from "procedurally assembled Three.js p
 | Stage 2 | Backpack, chair | ✔ `backpack.glb` (soft-packed body, surface-hugging compression straps, buckles, bungee, foam mat, stitching; ~15k tris, 1.4 MB) · `chair.glb` (X-frame camp chair, sagging slings, sleeves, drink holder; ~6k tris, 0.7 MB) |
 | Stage 3 | Lantern | ✔ `lantern.glb` (hurricane lantern: stamped fount, side air tubes, chimney hood, brass burner and wick knob, glass globe in a wire guard, bail; chipped enamel with bare-steel flakes and soot; ~11k tris, 0.7 MB) |
 | Stage 4 | Kettle + stand | ✔ `kettle.glb` (12 L cast-iron kettle: foot ring, casting flange, rolled neck, lid and knob, tapered spout, lugs, forged bail with a wooden grip; sooted bottom, worn edges, oxide · forged four-leg pot stand with a brace hoop, legs set between the logs; ~8.5k tris, 0.7 MB) |
-| Stage 5 | Torch, pinecone, logs, axe, stump… | planned |
+| Stage 5 | Torch, pinecone, logs ✔ · axe, stump, woodpile, mug (planned) | `torch.glb` (crooked debarked staff, pitch-soaked burlap head with spiral strips and jute lashing, ember emissive map; ~3.1k tris) · `pinecone.glb` (open cone, 60 keeled scales on a golden-angle spiral, weathered tips; ~1.8k tris) · `firewood.glb` (3 log variants: fissured bark, sawn end grain, branch stubs, a separate charred end with glowing alligator cracks) |
 
 Rebuild the assets (Blender 4.x, or `pip install bpy`):
 
@@ -185,6 +185,9 @@ blender --background --python tools/blender/build_backpack.py  # backpack.glb + 
 blender --background --python tools/blender/build_chair.py     # chair.glb + assets/source/chair/chair.blend
 blender --background --python tools/blender/build_lantern.py   # lantern.glb + assets/source/lantern/lantern.blend
 blender --background --python tools/blender/build_kettle.py    # kettle.glb (kettle + stand) + assets/source/kettle/kettle.blend
+blender --background --python tools/blender/build_torch.py     # torch.glb
+blender --background --python tools/blender/build_pinecone.py  # pinecone.glb
+blender --background --python tools/blender/build_firewood.py  # firewood.glb (3 log variants)
 ```
 
 You can also open `assets/source/<name>/<name>.blend`, edit it and export over `assets/models/<name>.glb` with the settings in `docs/asset-pipeline.md` §6.
@@ -250,7 +253,7 @@ Campfire/
 ├── tools/blender/       # Blender asset build scripts (bpy)
 ├── assets/
 │   ├── textures/
-│   ├── models/          # production .glb assets (tent, backpack, chair, lantern, kettle …)
+│   ├── models/          # production .glb assets (tent, backpack, chair, lantern, kettle, torch, pinecone, firewood …)
 │   │   └── procedural/  # procedural-model exports + models.json (override switches)
 │   └── source/          # asset source files (.blend)
 ├── scripts/

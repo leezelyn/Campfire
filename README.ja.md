@@ -178,7 +178,7 @@ http://localhost:8341
 | Stage 2 | バックパック、椅子 | ✔ `backpack.glb`（荷物の詰まった柔らかな本体、面に沿うコンプレッションストラップ、バックル、バンジーコード、マット、縫い目；約 1.5 万三角形、1.4 MB）· `chair.glb`（X フレームのキャンプチェア、たわんだ座面／背布、スリーブ、ドリンクホルダー；約 6 千三角形、0.7 MB） |
 | Stage 3 | ランタン | ✔ `lantern.glb`（ハリケーンランタン：プレス成形のタンク、左右の給気管、フード、真鍮バーナーと芯ノブ、ワイヤーガード内のガラスホヤ、ハンドル；ホーロー塗装の剥げと煤；約 1.1 万三角形、0.7 MB） |
 | Stage 4 | ケトル + スタンド | ✔ `kettle.glb`（12 L 鋳鉄ケトル：高台、鋳造フランジ、巻き口、蓋とつまみ、先細りの注ぎ口、吊り耳、木製グリップ付き鍛鉄ハンドル；底の煤、角の擦れ、錆 · 補強リング付きの鍛鉄 4 脚スタンド、脚は薪の間；約 8.5 千三角形、0.7 MB） |
-| Stage 5 | 松明、松ぼっくり、薪、斧、薪割り台など | 予定 |
+| Stage 5 | 松明、松ぼっくり、薪 ✔ · 斧、薪割り台、薪の山、マグ（予定） | `torch.glb`（皮を剥いだ曲がり木の柄、油を染み込ませた麻布の頭部に螺旋の布と麻ひもの結束、残り火の発光マップ；約 3.1 千三角形）· `pinecone.glb`（開いた松ぼっくり、黄金角で並ぶ稜のある鱗片 60 枚、先端の風化；約 1.8 千三角形）· `firewood.glb`（薪 3 種：割れた樹皮、木口の年輪、枝の切り株、発光する亀甲状のひび割れを持つ独立した炭化部） |
 
 アセットの再生成（Blender 4.x、または `pip install bpy`）：
 
@@ -188,6 +188,9 @@ blender --background --python tools/blender/build_backpack.py  # backpack.glb + 
 blender --background --python tools/blender/build_chair.py     # chair.glb + assets/source/chair/chair.blend
 blender --background --python tools/blender/build_lantern.py   # lantern.glb + assets/source/lantern/lantern.blend
 blender --background --python tools/blender/build_kettle.py    # kettle.glb (kettle + stand) + assets/source/kettle/kettle.blend
+blender --background --python tools/blender/build_torch.py     # torch.glb
+blender --background --python tools/blender/build_pinecone.py  # pinecone.glb
+blender --background --python tools/blender/build_firewood.py  # firewood.glb (3 log variants)
 ```
 
 `assets/source/<名前>/<名前>.blend` を直接編集し、`docs/asset-pipeline.md` §6 の設定で `assets/models/<名前>.glb` に書き出すこともできます。
@@ -253,7 +256,7 @@ Campfire/
 ├── tools/blender/       # Blender アセットビルドスクリプト（bpy）
 ├── assets/
 │   ├── textures/
-│   ├── models/          # 正式 .glb アセット（テント、バックパック、椅子、ランタン、ケトル …）
+│   ├── models/          # 正式 .glb アセット（テント、バックパック、椅子、ランタン、ケトル、松明、松ぼっくり、薪 …）
 │   │   └── procedural/  # 手続きモデルの書き出し + models.json（置き換え設定）
 │   └── source/          # アセットのソースファイル（.blend）
 ├── scripts/

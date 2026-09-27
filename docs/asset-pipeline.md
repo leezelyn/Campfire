@@ -22,9 +22,10 @@ Campfire/
 │   ├── chair.glb                 # Stage 2 ✔
 │   ├── lantern.glb               # Stage 3 ✔
 │   ├── kettle.glb                # Stage 4 ✔（两个根节点：KettleRoot + KettleStandRoot）
-│   ├── torch.glb                 # Stage 5
-│   ├── pinecone.glb              # Stage 5
-│   ├── props/                    # Stage 5：logs、axe、stump、woodpile、mug …
+│   ├── torch.glb                 # Stage 5 ✔
+│   ├── pinecone.glb              # Stage 5 ✔
+│   ├── firewood.glb              # Stage 5 ✔（三个根节点 Log1Root / Log2Root / Log3Root）
+│   ├── props/                    # 后续：axe、stump、woodpile、mug …
 │   └── procedural/               # v1 的"程序模型导出"（供 Blender 参考/覆盖，不是正式资产）
 │       ├── models.json           # 覆盖开关
 │       └── *.glb
@@ -33,14 +34,20 @@ Campfire/
 │   ├── backpack/backpack.blend
 │   ├── chair/chair.blend
 │   ├── lantern/lantern.blend
-│   └── kettle/kettle.blend       # 每个目录另有 preview.png（Cycles 预览）；textures/ 为构建中间产物，已 gitignore
+│   ├── kettle/kettle.blend
+│   ├── torch/torch.blend
+│   ├── pinecone/pinecone.blend
+│   └── firewood/firewood.blend   # 每个目录另有 preview.png（Cycles 预览）；textures/ 为构建中间产物，已 gitignore
 └── tools/blender/                # 可复现的 Blender 构建脚本（bpy）
     ├── cf_common.py              # Stage 2 起的公共工具：软体造型、表面投影织带、UV0/UV1、烘焙旧化、glTF 导出
     ├── build_tent.py
     ├── build_backpack.py
     ├── build_chair.py
     ├── build_lantern.py
-    └── build_kettle.py
+    ├── build_kettle.py
+    ├── build_torch.py
+    ├── build_pinecone.py
+    └── build_firewood.py
 ```
 
 规则：
@@ -94,7 +101,7 @@ tent.materials.canvas        // （可选）需要代码驱动的材质
 | `kettle-stand` | `KettleStandRoot` | `RestAnchor`（壶底落点） | — | — |
 | `torch` | `TorchRoot`（原点=柄底，轴 +Y） | `FlameAnchor`、`Handle`、`Wrap`（材质 `TorchEmber`） | `GripAnchor` | `Wrap` 材质设 emissive 余烬贴图 |
 | `pinecone` | `PineconeRoot`（原点=中心） | — | — | 每个实例克隆材质（燃烧变色） |
-| `log` | `LogRoot`（原点=中心，长轴 +Y） | — | `CharEnd` | 共享材质 |
+| `log-1/2/3` | `Log1Root`…`Log3Root`（原点=外端截面中心，轴 +Y；长 0.66/0.70/0.74 m） | `Bark`、`CharEnd`；材质 `Bark`、`Charcoal` | — | 共享材质：`Bark` 颜色随燃尽变黑、`Charcoal` 发光强度随火势；加柴时隐藏 `CharEnd` 并换用新鲜树皮材质 |
 | `axe` | `AxeRoot`（原点=斧头与柄交接处，柄 +Y，刃 +Z） | `BladeEdge` | `GripAnchor` | 若枢轴变化需重调 `CHOP_POSE` |
 | `stump` | `StumpRoot` | `TopAnchor`、`AxeSocket` | — | — |
 
@@ -241,6 +248,29 @@ const tent = await createTentInstance(assets); // 失败时抛错 → 回退程�
 - 程序化回退仍保留，且旧壶的 4 张 1024 铸铁 PNG 只在回退时才加载。
 - 蒸汽粒子球 8×6 段 → 16×12 段（近景可见棱面），蒸汽逻辑不变。
 
+## 7.5 Stage 5a 实测（火把 / 松果 / 木柴）
+
+| 项 | torch.glb | pinecone.glb | firewood.glb |
+|---|---|---|---|
+| 三角形 | 3 096（Handle 812、Wrap 2 284；预算 4 k） | 1 792（预算 2 k，最多同时 9 个） | 每段 1 058（Bark 678 + CharEnd 380）×3；场景内 8 根火堆 + ≤5 根加柴 ≈ 11.9 k |
+| 材质 | 2：TorchWood、TorchEmber | 1：Pinecone（逐实例克隆） | 2：Bark、Charcoal（三段共享） |
+| 贴图（UV1 烘焙，1024） | 颜色 + ORM + 木纹浮雕法线；缠布另用 UV0 平铺织纹法线；余烬 emissive | 颜色 + ORM（512） | 颜色 + ORM + 树皮 / 年轮 / 炭化浮雕法线 + 炭缝 emissive |
+| 文件 | 0.73 MB | 0.23 MB | 1.05 MB |
+| 契约 | `TorchRoot` / `FlameAnchor`（y 1.292，与 v1 一致）/ `GripAnchor` / `Handle` / `Wrap` / `TorchEmber` | `PineconeRoot`（几何中心）/ `Cone` / `Pinecone` | `Log{1,2,3}Root` / `Bark` / `CharEnd` / `Bark` / `Charcoal` |
+| 构建 | `build_torch.py` ≈1 min | `build_pinecone.py` ≈40 s | `build_firewood.py` ≈2 min |
+
+新增的烘焙能力（`cf_common.bake_weathering(patterns=True)`，逐对象 `cf_pattern`，都在物体局部空间、沿局部 Z 建模）：
+树皮（沿轴向的窄裂纹网 + 皮块）、年轮（绕轴同心环 + 深色髓心）、去皮木纹、木炭（龟甲裂纹）、余烬缠布（自下而上的焦黑与参差燃烧线）；
+同时烘焙**浮雕法线**（Cycles NORMAL，UV1 切线空间）与**发光贴图**（炭缝 / 余烬）。另有 `cf_scorch`（炭段下方的熏黑带）、`cf_tip`（逐顶点：松果鳞片尖端的风化浅色）、`glow_colors`（发光色阶）。
+
+接入与复查：
+- 火堆 8 根：按所需长度挑最接近的一段，并绕自身轴随机转角，避免重复感；坍塌（四元数插值）逻辑不变。
+- 炭化：GLB 树皮自带颜色贴图，燃尽变黑改为对白色的乘色（`BARK_FRESH/BARK_CHAR` 设为与程序化相同的亮度比）；`Charcoal` 发光强度仍由火势驱动（最高 ≈2.3×），所以发光色阶做得偏深红，否则炭缝过曝成白色。
+- 加柴：同一 GLB 模板隐藏 `CharEnd`、换独立的新鲜树皮材质（不参与火堆炭化）；外包一层组使翻滚绕中点；移除时不释放共享几何。
+- 火把：点光与粒子发射点取 `FlameAnchor`；余烬材质 `TorchEmber` 的强度由引燃进度驱动（未点燃 = 0）；辉光 Sprite 与点光由 `makeTorchFlameRig()` 统一创建（程序化回退共用）。
+- 松果：模板实例化一次，每次投掷同步克隆节点（共享几何，标记 `shared` 不被释放）并克隆材质，燃烧变色 / 余烬发光互不影响。
+- 全部保留程序化回退（`makeTorchModel()`、`pineconeGeo`、`makeLogGeometry()`）。
+
 ## 8. 分阶段计划
 
 每个阶段：Blender 制作 → 导出校验 → 接入（保留程序化回退）→ **与上一版本截图对比** → 再进入下一阶段。
@@ -251,7 +281,8 @@ const tent = await createTentInstance(assets); // 失败时抛错 → 回退程�
 | **2** ✔ | **Backpack + Chair** | 布料/织带/扣具的粗糙度差异；营地生活感 |
 | **3** ✔ | **Lantern** | 喷漆金属、黄铜、玻璃、局部光与火光叠加 |
 | **4** ✔ | **Kettle + Stand** | 与放置动画、受热自发光、蒸汽锚点结合 |
-| 5 | Torch / Pinecone / Logs / Axe / Stump / WoodPile / Mug | 互动锚点、实例化与材质克隆 |
+| **5a** ✔ | **Torch / Pinecone / Logs**（火堆 8 根 + 加柴） | 互动锚点、实例化与材质克隆 |
+| 5b | Axe / Stump / WoodPile / Mug | 劈柴关键帧枢轴、柴垛 |
 
 每阶段结束同步复查光照：月光、篝火点光、提灯局部光、阴影柔和度、色调映射与曝光、自发光强度、粗糙度响应、接触阴影。
 

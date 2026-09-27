@@ -113,3 +113,11 @@ export const createLanternInstance = assets => assets.create('lantern');
 export const createKettleInstance = assets => assets.create('kettle');
 export const createKettleStandInstance = assets => assets.create('kettle-stand');
 export const createTorchInstance = assets => assets.create('torch');
+export const createPineconeInstance = assets => assets.create('pinecone');
+/** 木柴：按需要的长度挑最接近的一段（log-1/2/3 = 0.66/0.70/0.74 m） */
+export const createLogInstance = (assets, length = 0.7) => {
+  const keys = ['log-1', 'log-2', 'log-3'];
+  const key = keys.reduce((best, k) =>
+    Math.abs(assets.registry[k].length - length) < Math.abs(assets.registry[best].length - length) ? k : best);
+  return assets.create(key);
+};

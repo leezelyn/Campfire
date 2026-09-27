@@ -437,7 +437,8 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { mergeVertices, mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
-  AssetManager, createTentInstance, createLanternInstance, createKettleInstance, createKettleStandInstance
+  AssetManager, createTentInstance, createLanternInstance, createKettleInstance, createKettleStandInstance,
+  createTorchInstance, createPineconeInstance, createLogInstance
 } from './src/assets/AssetManager.js';
 
 /* ============================================================
@@ -476,7 +477,7 @@ renderer.toneMappingExposure = 1.1;
 // 3D 资产管线（src/assets）：Blender 制作的正式模型在场景构建开始时就发起下载，
 // 与后面的程序化建模并行；用到时再 await（见帐篷摆放处）
 const assets = new AssetManager({ renderer });
-assets.preload(['tent', 'backpack', 'chair', 'lantern', 'kettle', 'kettle-stand']);
+assets.preload(['tent', 'backpack', 'chair', 'lantern', 'kettle', 'kettle-stand', 'torch', 'pinecone', 'log-1', 'log-2', 'log-3']);
 document.getElementById('app').appendChild(renderer.domElement);
 
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -3207,8 +3208,10 @@ function loadPbrTextures(name, repeat) {
 // 木柴：放射状围成圆锥（俯视呈辐条状、正视呈帐篷状），内端炭化发光
 // 随燃烧推进：树皮渐黑（BARK_FRESH→BARK_CHAR）、teepee 内端下沉坍塌
 let charMat, barkMat;
+let teepeeBarkMat;   // 火堆木柴的树皮材质（随燃尽变黑）：程序化 barkMat 或 GLB 的 Bark
 const BARK_FRESH = new THREE.Color(0x33200f), BARK_CHAR = new THREE.Color(0x0c0805);
 const teepeeLogs = [];
+let tossLogKit = null;   // 「加柴」用的 GLB 木柴模板（无炭段、不随火堆炭化的新鲜树皮）
 let logEndMat;   // 年轮端面材质（新加的柴也用）
 {
   barkMat = new THREE.MeshStandardMaterial({ name: 'FirewoodBark', color: BARK_FRESH.clone(), roughness: 0.95 });
@@ -3288,6 +3291,29 @@ let logEndMat;   // 年轮端面材质（新加的柴也用）
   const rng = mulberry32(8);
   const n = 8;
   const up = new THREE.Vector3(0, 1, 0);
+  teepeeBarkMat = barkMat;
+  // Stage 5：木柴改用 Blender 资产（firewood.glb，三段长短粗细不同；原点 = 外端截面中心、轴向 +Y）。
+  // GLB 树皮自带颜色贴图，炭化改为对白色的乘色（与程序化 BARK_FRESH→BARK_CHAR 的亮度比一致）
+  let glbLogs = null;
+  try {
+    const kits = await Promise.all([0.66, 0.70, 0.74].map(len => createLogInstance(assets, len)));
+    glbLogs = kits;
+    teepeeBarkMat = kits[0].materials.bark;
+    charMat = kits[0].materials.char;
+    BARK_FRESH.setRGB(1, 1, 1);
+    BARK_CHAR.setRGB(0.11, 0.17, 0.3);
+    // 加柴模板：隐去炭段，树皮换成独立的新鲜材质（不参与火堆炭化）
+    const freshBark = teepeeBarkMat.clone();
+    freshBark.name = 'BarkFresh';
+    for (const k of kits) {
+      k.parts.charEnd.visible = false;
+      k.parts.bark.traverse(o => { if (o.isMesh) o.material = freshBark; });
+    }
+    tossLogKit = kits.map(k => ({ root: k.root, length: k.def.length }));
+    // 模板已被加柴占用：火堆的 8 根另行实例化
+  } catch (e) {
+    console.warn('[assets] firewood.glb unavailable, falling back to procedural logs:', e.message || e);
+  }
   for (let i = 0; i < n; i++) {
     const a = (i / n) * Math.PI * 2 + (rng() - 0.5) * 0.25;
     const rOut = 0.62 + rng() * 0.06;
@@ -3301,19 +3327,26 @@ let logEndMat;   // 年轮端面材质（新加的柴也用）
     log.position.copy(outer);
     const ndir = dir.clone().normalize();
     log.quaternion.setFromUnitVectors(up, ndir);
-    const bark = new THREE.Mesh(makeLogGeometry(radius * 0.8, radius, len, i * 4.1 + 1), barkMat);
-    bark.position.y = len / 2;
-    bark.castShadow = true;
-    log.add(bark);
-    // 外端年轮面（朝外微露，正对镜头一侧看得到）
-    const cap = new THREE.Mesh(new THREE.CircleGeometry(radius * 0.92, 12), logEndMat);
-    cap.rotation.x = Math.PI / 2;
-    cap.position.y = -0.004;
-    log.add(cap);
-    // 靠近火心的一段烧成炭并发光
-    const char = new THREE.Mesh(makeLogGeometry(radius * 0.84, radius * 1.02, len * 0.38, i * 4.1 + 2), charMat);
-    char.position.y = len * 0.78;
-    log.add(char);
+    if (glbLogs) {
+      // 按所需长度挑最接近的一段，并绕自身轴随机转一下，避免 8 根看起来一模一样
+      const m = await createLogInstance(assets, len);
+      m.root.rotation.y = rng() * Math.PI * 2;
+      log.add(m.root);
+    } else {
+      const bark = new THREE.Mesh(makeLogGeometry(radius * 0.8, radius, len, i * 4.1 + 1), barkMat);
+      bark.position.y = len / 2;
+      bark.castShadow = true;
+      log.add(bark);
+      // 外端年轮面（朝外微露，正对镜头一侧看得到）
+      const cap = new THREE.Mesh(new THREE.CircleGeometry(radius * 0.92, 12), logEndMat);
+      cap.rotation.x = Math.PI / 2;
+      cap.position.y = -0.004;
+      log.add(cap);
+      // 靠近火心的一段烧成炭并发光
+      const char = new THREE.Mesh(makeLogGeometry(radius * 0.84, radius * 1.02, len * 0.38, i * 4.1 + 2), charMat);
+      char.position.y = len * 0.78;
+      log.add(char);
+    }
     fireGroup.add(log);
     // 坍塌目标姿态：内端下沉、整体趋于平铺
     const flatDir = new THREE.Vector3(ndir.x, ndir.y * 0.18, ndir.z).normalize();
@@ -4030,8 +4063,10 @@ function tossLog() {
     if (idx >= 0) {
       const old = addedLogs.splice(idx, 1)[0];
       scene.remove(old.mesh);
-      old.mesh.geometry.dispose();
-      old.mesh.material.dispose();
+      if (old.mesh.isMesh) {                   // GLB 木柴共享模板几何与材质，不释放
+        old.mesh.geometry.dispose();
+        old.mesh.material.dispose();
+      }
     }
   }
   // 从镜头一侧抛入，抛物线命中火心附近
@@ -4042,12 +4077,23 @@ function tossLog() {
   const tx = (Math.random() - 0.5) * 0.4, tz = (Math.random() - 0.5) * 0.4;
   const ty = 0.30 + Math.random() * 0.12;
   const T = 0.6 + Math.random() * 0.15;     // 飞行时间，反解初速度
-  const mesh = new THREE.Mesh(
-    makeLogGeometry(0.05, 0.062, 0.68 + Math.random() * 0.16, Math.random() * 100),
-    // 新柴：独立新鲜木色，不随炭化变黑；共享树皮凹凸贴图（material.dispose 不会连带释放共享贴图）
-    new THREE.MeshStandardMaterial({ color: 0x3a2512, roughness: 0.9, bumpMap: barkMat.bumpMap, bumpScale: 0.012 })
-  );
-  mesh.castShadow = true;
+  let mesh;
+  if (tossLogKit) {
+    // GLB 木柴：包一层组，使翻滚 / 落地姿态绕木柴中点（模型原点在一端）
+    const kit = tossLogKit[(Math.random() * tossLogKit.length) | 0];
+    mesh = new THREE.Group();
+    const logModel = kit.root.clone(true);
+    logModel.position.y = -kit.length / 2;
+    logModel.rotation.y = Math.random() * Math.PI * 2;
+    mesh.add(logModel);
+  } else {
+    mesh = new THREE.Mesh(
+      makeLogGeometry(0.05, 0.062, 0.68 + Math.random() * 0.16, Math.random() * 100),
+      // 新柴：独立新鲜木色，不随炭化变黑；共享树皮凹凸贴图（material.dispose 不会连带释放共享贴图）
+      new THREE.MeshStandardMaterial({ color: 0x3a2512, roughness: 0.9, bumpMap: barkMat.bumpMap, bumpScale: 0.012 })
+    );
+    mesh.castShadow = true;
+  }
   mesh.position.set(sx, sy, sz);
   scene.add(mesh);
   addedLogs.push({
@@ -4647,11 +4693,29 @@ function makeTorchModel() {
   torchCharredRim.rotation.x = Math.PI / 2;
   torchCharredRim.position.y = 1.292;
 
-  // 火焰本体由 torchFlameSys 粒子承担（双层焰体，见 updateTorchFlame）；
-  // 这里只保留柔和辉光与点光——此前的手绘火苗 Sprite 是卡通感的来源，已移除
+  const { torchFlame, torchGlow, torchLight } = makeTorchFlameRig(new THREE.Vector3(0, 1.292, 0));
+
+  torch.add(torchWood, torchButt, torchWrap, torchBands, torchKnot, torchCharredRim, torchFlame);
+  torch.traverse(o => {
+    if (!o.isMesh || !o.geometry.attributes.uv || o.geometry.attributes.uv2) return;
+    o.geometry.setAttribute('uv2', new THREE.BufferAttribute(new Float32Array(o.geometry.attributes.uv.array), 2));
+  });
+  torch.userData.sculptRuntime = {
+    nodes: { root: torch, flameRig: torchFlame, knot: torchKnot, ribbons: torchBands },
+    sockets: { flameEmitter: new THREE.Vector3(0, 1.292, 0) },
+    colliders: [{ id: 'torch-body', type: 'capsule', center: [0, 0.67, 0], radius: 0.11, height: 1.34 }],
+    destructionGroups: { shaft: ['torchWoodShaft'], fuelHead: ['torchClothCore', 'torchClothRibbons', 'torchSideKnot'] }
+  };
+  return { torch, torchFlame, torchGlow, torchLight, torchWrapMat: clothCoreMat, head: new THREE.Vector3(0, 1.292, 0) };
+}
+
+// 火把头的辉光与点光（程序化与 GLB 火把共用）。
+// 火焰本体由 torchFlameSys 粒子承担（双层焰体，见 updateTorchFlame）；
+// 这里只保留柔和辉光与点光——此前的手绘火苗 Sprite 是卡通感的来源，已移除
+function makeTorchFlameRig(head) {
   const torchFlame = new THREE.Group();
   torchFlame.name = 'torchFlameRig';
-  torchFlame.position.y = 1.292;
+  torchFlame.position.copy(head);
   const torchGlow = new THREE.Sprite(new THREE.SpriteMaterial({
     map: radialTexture(64, [
       [0, 'rgba(255,220,120,0.45)'], [0.46, 'rgba(255,105,25,0.16)'], [1, 'rgba(255,60,0,0)']
@@ -4666,24 +4730,31 @@ function makeTorchModel() {
   // 点光不挂在火把下：挂到场景根部常驻可见（强度 0 即无光）。
   // 光源显隐会改变灯数 → three.js 全场景着色器重编译，这正是"点燃时卡一下"的原因
   const torchLight = new THREE.PointLight(0xff7928, 0, 6, 2);
-
-  torch.add(torchWood, torchButt, torchWrap, torchBands, torchKnot, torchCharredRim, torchFlame);
-  torch.traverse(o => {
-    if (!o.isMesh || !o.geometry.attributes.uv || o.geometry.attributes.uv2) return;
-    o.geometry.setAttribute('uv2', new THREE.BufferAttribute(new Float32Array(o.geometry.attributes.uv.array), 2));
-  });
-  torch.userData.sculptRuntime = {
-    nodes: { root: torch, flameRig: torchFlame, knot: torchKnot, ribbons: torchBands },
-    sockets: { flameEmitter: new THREE.Vector3(0, 1.292, 0) },
-    colliders: [{ id: 'torch-body', type: 'capsule', center: [0, 0.67, 0], radius: 0.11, height: 1.34 }],
-    destructionGroups: { shaft: ['torchWoodShaft'], fuelHead: ['torchClothCore', 'torchClothRibbons', 'torchSideKnot'] }
-  };
-  return { torch, torchFlame, torchGlow, torchLight, torchWrapMat: clothCoreMat };
+  return { torchFlame, torchGlow, torchLight };
 }
 
-const {
-  torch, torchFlame, torchGlow, torchLight, torchWrapMat
-} = makeTorchModel();
+// Stage 5：火把改用 Blender 资产（torch.glb：原点 = 柄底、轴向 +Y）；
+// 火焰粒子与点光的发射点取契约锚点 FlameAnchor，缠布余烬材质 TorchEmber 由引燃进度驱动
+async function makeTorchAsset() {
+  const m = await createTorchInstance(assets);
+  const torch = new THREE.Group();
+  torch.name = 'torchRoot';
+  torch.add(m.root);
+  torch.updateMatrixWorld(true);
+  const head = new THREE.Vector3().setFromMatrixPosition(m.anchors.flame.matrixWorld);
+  const rig = makeTorchFlameRig(head);
+  torch.add(rig.torchFlame);
+  return { torch, ...rig, torchWrapMat: m.materials.ember, head };
+}
+let torchKit;
+try {
+  torchKit = await makeTorchAsset();
+} catch (e) {
+  console.warn('[assets] torch.glb unavailable, falling back to the procedural torch:', e.message || e);
+  torchKit = makeTorchModel();
+}
+const { torch, torchFlame, torchGlow, torchLight, torchWrapMat } = torchKit;
+const TORCH_HEAD = torchKit.head;          // 火把头（torch 局部）：火焰粒子发射点
 scene.add(torch, torchLight);
 const _torchHead = new THREE.Vector3();   // 火把头世界坐标（粒子发射点）
 const torchAction = {
@@ -4741,7 +4812,7 @@ function updateTorch(dt, t) {
   }
   // Flame emission is rooted at the charred top rim of the wrapped head.
   torch.updateMatrixWorld(true);
-  _torchHead.set(0, 1.292, 0).applyMatrix4(torch.matrixWorld);
+  _torchHead.copy(TORCH_HEAD).applyMatrix4(torch.matrixWorld);
   updateTorchFlame(dt, t, a.ign, _torchHead.x, _torchHead.y, _torchHead.z);
 
   // 辉光与点光随引燃进度 ign 门控、随火光闪烁呼吸（火焰本体是粒子，见 updateTorchFlame）
@@ -4786,15 +4857,31 @@ const pineconeGeo = (() => {
   return g;
 })();
 const pinecones = [];
+// Stage 5：松果改用 Blender 资产（pinecone.glb，原点 = 几何中心）。模板实例化一次，
+// 每次投掷同步克隆节点（共享几何）并克隆一份材质，逐个燃烧变色
+let pineconeKit = null;
+try {
+  pineconeKit = await createPineconeInstance(assets);
+  pineconeKit.root.traverse(o => { if (o.geometry) o.geometry.userData.shared = true; });
+} catch (e) {
+  console.warn('[assets] pinecone.glb unavailable, falling back to the procedural pinecone:', e.message || e);
+}
 function throwPinecone() {
   if (campTidied) return;
-  const group = new THREE.Group();
-  const mat = new THREE.MeshStandardMaterial({
-    color: 0x3f2512, roughness: 0.95, emissive: 0xff4a0a, emissiveIntensity: 0
-  });
-  const core = new THREE.Mesh(pineconeGeo, mat);
-  core.castShadow = true;
-  group.add(core);
+  let group, mat;
+  if (pineconeKit) {
+    group = pineconeKit.root.clone(true);
+    mat = pineconeKit.materials.body.clone();
+    group.traverse(o => { if (o.isMesh) o.material = mat; });
+  } else {
+    group = new THREE.Group();
+    mat = new THREE.MeshStandardMaterial({
+      color: 0x3f2512, roughness: 0.95, emissive: 0xff4a0a, emissiveIntensity: 0
+    });
+    const core = new THREE.Mesh(pineconeGeo, mat);
+    core.castShadow = true;
+    group.add(core);
+  }
   const start = cameraSidePosition(2.5, 1.15);
   const target = new THREE.Vector3((Math.random() - 0.5) * 0.35, 0.2, (Math.random() - 0.5) * 0.35);
   const T = 0.58 + Math.random() * 0.14;
@@ -5817,7 +5904,7 @@ function step(dt, t) {
   fireDrive = P.fireScale * (0.26 + 1.05 * fireHealth);   // 无柴时降到余烬强度，需续柴维持
   // 柴堆炭化与坍塌：随燃尽程度（1-fireHealth）渐进，平滑跟随
   collapseAmt += ((1 - fireHealth) - collapseAmt) * Math.min(1, dt * 0.5);
-  barkMat.color.copy(BARK_FRESH).lerp(BARK_CHAR, collapseAmt);   // 树皮渐黑
+  teepeeBarkMat.color.copy(BARK_FRESH).lerp(BARK_CHAR, collapseAmt);   // 树皮渐黑
   for (const L of teepeeLogs) {                           // 内端下沉、teepee 渐塌
     L.group.quaternion.copy(L.baseQuat).slerp(L.flatQuat, collapseAmt * 0.7);
     L.group.position.y = L.baseY - collapseAmt * 0.05;

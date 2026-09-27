@@ -452,8 +452,10 @@ def pbr(name, color, rough, metal=0.0, normal_img=None, normal_strength=0.4, cul
     return m
 
 
-def baked_material(name, base_path, orm_path, normal_img, normal_strength=0.4, cull=True):
-    """Final PBR material: baked colour + ORM on UV1 (occlusion via glTF Material Output), tiling normal on UV0."""
+def baked_material(name, base_path, orm_path, normal_img, normal_strength=0.4, cull=True,
+                   normal_uv='UV0', emissive_path=None, emissive_strength=1.0):
+    """Final PBR material: baked colour + ORM on UV1 (occlusion via glTF Material Output), normal map on
+    `normal_uv` (tiling detail on UV0, or a baked relief on UV1), optional baked emissive map on UV1."""
     m = bpy.data.materials.new(name)
     m.use_nodes = True
     m.use_backface_culling = cull
@@ -469,10 +471,16 @@ def baked_material(name, base_path, orm_path, normal_img, normal_strength=0.4, c
     occ = nt.nodes.new('ShaderNodeGroup')
     occ.node_tree = gltf_output_group()
     nt.links.new(sep.outputs['Red'], occ.inputs['Occlusion'])
+    if emissive_path is not None:
+        te = _image_node(nt, bpy.data.images.load(emissive_path, check_existing=False), 'UV1', False, (-600, -650))
+        nt.links.new(te.outputs['Color'], b.inputs['Emission Color'])
+        b.inputs['Emission Strength'].default_value = emissive_strength
     if normal_img is not None:
-        tn = _image_node(nt, normal_img, 'UV0', True, (-600, -350))
+        if isinstance(normal_img, str):
+            normal_img = bpy.data.images.load(normal_img, check_existing=False)
+        tn = _image_node(nt, normal_img, normal_uv, True, (-600, -350))
         nm = nt.nodes.new('ShaderNodeNormalMap')
-        nm.uv_map = 'UV0'
+        nm.uv_map = normal_uv
         nm.inputs['Strength'].default_value = normal_strength
         nt.links.new(tn.outputs['Color'], nm.inputs['Color'])
         nt.links.new(nm.outputs['Normal'], b.inputs['Normal'])
@@ -526,7 +534,8 @@ def unwrap_uv1(objs, uv0_tile, margin=0.004):
 def bake_weathering(objs, name, out_dir, size=1024, dirt_height=0.12, fade=0.4, edge_wear=0.35,
                     stains=0.0, soot_front=0.0, ao_distance=0.2, seed=0.0,
                     chips=0.0, chip_color='#6c6a64', soot_top=None, metal=False,
-                    soot_bottom=None, rust=0.0):
+                    soot_bottom=None, rust=0.0, patterns=False, glow_z=(0.0, 1.0), normal_depth=0.0025,
+                    tip_color=None, glow_colors=('#7a1e04', '#ffb066')):
     """Bake a weathered base colour and ORM (AO / roughness / metal) into UV1 for `objs`.
 
     Each object supplies its own look through custom properties:
@@ -539,6 +548,15 @@ def bake_weathering(objs, name, out_dir, size=1024, dirt_height=0.12, fade=0.4, 
     `soot_top` = (z0, z1, amount) blackens surfaces above z0 (lamp chimneys, pot rims);
     `soot_bottom` = (z0, z1, amount) blackens surfaces below z1 (pots over a fire, z0 = full soot);
     `rust` > 0 adds orange-brown oxide patches (matte, non-metallic).
+    Wood & fire (patterns=True): per-object `cf_pattern` selects an object-space surface pattern
+    (objects are modelled along their local Z):
+        1 bark (fissures along Z)  2 end grain (growth rings round Z)  3 debarked wood grain
+        4 charcoal (alligator cracks)  5 ember cloth (glows from glow_z[0] up to glow_z[1])
+    and two more maps are baked into UV1: a tangent-space normal map from the pattern relief
+    (`normal_depth` m) and an emissive map (glowing char cracks / ember gradient) ramping from
+    glow_colors[0] (dim) to glow_colors[1] (hottest) — keep it deep if the runtime drives intensity > 1.
+    `tip_color`: a per-vertex float attribute `cf_tip` (0..1) blends toward this colour (weathered scale tips).
+    Returns [basecolor, orm] (+ [normal, emissive] when patterns=True).
     """
     sc = bpy.context.scene
     sc.render.engine = 'CYCLES'
@@ -614,6 +632,85 @@ def bake_weathering(objs, name, out_dir, size=1024, dirt_height=0.12, fade=0.4, 
     var = op('ADD', mr(noise(3.0), 0.3, 0.7, -0.09, 0.09), mr(noise(45.0, 2.0), 0.3, 0.7, -0.035, 0.035))
     L(op('ADD', var, 1.0), hsv.inputs['Value'])
     col = hsv.outputs['Color']
+    if tip_color is not None:
+        attr_t = N('ShaderNodeAttribute')
+        attr_t.attribute_type, attr_t.attribute_name = 'GEOMETRY', 'cf_tip'
+        col = mix(col, srgb(tip_color), attr_t.outputs['Fac'])
+    height = glow = None
+    if patterns:
+        attr_p = N('ShaderNodeAttribute')
+        attr_p.attribute_type, attr_p.attribute_name = 'OBJECT', 'cf_pattern'
+        pv = attr_p.outputs['Fac']
+
+        def w(k):
+            return op('MAXIMUM', op('SUBTRACT', 1.0, op('ABSOLUTE', op('SUBTRACT', pv, float(k)), 0.0)), 0.0)
+
+        # 1 bark: plates split by deep fissures running along the log
+        # fissures = narrow zero-crossing lines of noise stretched along Z (two scales)
+        fis_a = op('ABSOLUTE', op('SUBTRACT', noise(20.0, 4.0, 0.55, (1, 1, 0.1)), 0.5), 0.0)
+        fis_b = op('ABSOLUTE', op('SUBTRACT', noise(48.0, 3.0, 0.55, (1, 1, 0.14)), 0.5), 0.0)
+        crack1 = op('MAXIMUM', mr(fis_a, 0.0, 0.035, 1.0, 0.0), op('MULTIPLY', mr(fis_b, 0.0, 0.025, 1.0, 0.0), 0.6))
+        plate = noise(70.0, 4.0, 0.6, (1, 1, 0.35))
+        f1 = op('SUBTRACT', op('ADD', 0.9, op('MULTIPLY', plate, 0.25)), op('MULTIPLY', crack1, 0.72))
+        h1 = op('ADD', op('MULTIPLY', plate, 0.3), op('SUBTRACT', 0.62, op('MULTIPLY', crack1, 0.75)))
+        # optional scorching toward a burning end: cf_scorch (amount) above cf_scorch_z
+        attr_sa = N('ShaderNodeAttribute')
+        attr_sa.attribute_type, attr_sa.attribute_name = 'OBJECT', 'cf_scorch'
+        attr_sz = N('ShaderNodeAttribute')
+        attr_sz.attribute_type, attr_sz.attribute_name = 'OBJECT', 'cf_scorch_z'
+        zrel = op('SUBTRACT', op('ADD', sp.outputs['Z'], op('MULTIPLY', op('SUBTRACT', noise(7.0, 3.0), 0.5), 0.08)),
+                  attr_sz.outputs['Fac'])
+        scorch = op('MULTIPLY', attr_sa.outputs['Fac'], mr(zrel, 0.0, 0.16))
+        f1 = op('MULTIPLY', f1, op('SUBTRACT', 1.0, op('MULTIPLY', scorch, 0.8)))
+        # 2 end grain: growth rings round the axis, darker pith
+        cxy = N('ShaderNodeCombineXYZ')
+        L(sp.outputs['X'], cxy.inputs['X'])
+        L(sp.outputs['Y'], cxy.inputs['Y'])
+        vlen = N('ShaderNodeVectorMath')
+        vlen.operation = 'LENGTH'
+        L(cxy.outputs['Vector'], vlen.inputs[0])
+        rr = vlen.outputs['Value']
+        ring = op('SINE', op('ADD', op('MULTIPLY', rr, 690.0), op('MULTIPLY', noise(12.0, 3.0), 7.0)), 0.0)
+        late = mr(ring, 0.5, 0.95)
+        f2 = op('SUBTRACT', op('SUBTRACT', 1.0, op('MULTIPLY', late, 0.32)), op('MULTIPLY', mr(rr, 0.006, 0.0), 0.4))
+        h2 = op('SUBTRACT', 0.5, op('MULTIPLY', late, 0.2))
+        # 3 debarked wood: long streaks and fine fibre
+        streak = noise(26.0, 5.0, 0.6, (1, 1, 0.04))
+        fibre = noise(150.0, 2.0, 0.5, (1, 1, 0.05))
+        f3 = op('ADD', 0.82, op('MULTIPLY', mr(streak, 0.3, 0.7), 0.3))
+        h3 = op('ADD', 0.4, op('ADD', op('MULTIPLY', streak, 0.12), op('MULTIPLY', fibre, 0.1)))
+        # 4 charcoal: alligator cells, deep cracks that glow
+        mp = N('ShaderNodeMapping')
+        mp.inputs['Scale'].default_value = (1, 1, 1.6)     # checks run round the log more than along it
+        mp.inputs['Location'].default_value = (seed * 1.3, seed * 0.7, seed * 2.1)
+        L(tc.outputs['Object'], mp.inputs['Vector'])
+        vor = N('ShaderNodeTexVoronoi')
+        vor.feature = 'DISTANCE_TO_EDGE'
+        vor.inputs['Scale'].default_value = 75.0
+        L(mp.outputs['Vector'], vor.inputs['Vector'])
+        crack4 = mr(vor.outputs['Distance'], 0.0, 0.05, 1.0, 0.0)
+        f4 = op('SUBTRACT', op('ADD', 0.85, op('MULTIPLY', noise(20.0, 3.0), 0.3)), op('MULTIPLY', crack4, 0.6))
+        h4 = op('ADD', op('SUBTRACT', 0.6, op('MULTIPLY', crack4, 0.6)), op('MULTIPLY', noise(90.0, 2.0), 0.1))
+        # cracks glow patchily (not every crack is live) over a dim ember baseline on the whole char surface
+        g4 = op('ADD', op('MULTIPLY', crack4, mr(noise(5.0, 3.0), 0.3, 0.6, 0.35, 1.0)),
+                op('MULTIPLY', mr(noise(9.0, 3.0), 0.3, 0.7), 0.16))
+        # 5 ember cloth: charred and glowing toward the top, ragged burn line
+        zz = op('ADD', sp.outputs['Z'], op('MULTIPLY', op('SUBTRACT', noise(9.0, 4.0), 0.5), 0.06))
+        g5 = mr(zz, glow_z[0], glow_z[1])
+        f5 = op('SUBTRACT', 1.0, op('MULTIPLY', g5, 0.75))
+
+        fac = op('ADD', op('ADD', op('MULTIPLY', w(1), op('SUBTRACT', f1, 1.0)), op('MULTIPLY', w(2), op('SUBTRACT', f2, 1.0))),
+                 op('ADD', op('MULTIPLY', w(3), op('SUBTRACT', f3, 1.0)),
+                    op('ADD', op('MULTIPLY', w(4), op('SUBTRACT', f4, 1.0)), op('MULTIPLY', w(5), op('SUBTRACT', f5, 1.0)))))
+        fac = op('ADD', fac, 1.0)
+        f3c = N('ShaderNodeCombineColor')
+        for ch in ('Red', 'Green', 'Blue'):
+            L(fac, f3c.inputs[ch])
+        col = mix(col, f3c.outputs['Color'], 1.0, 'MULTIPLY')
+        height = 0.5
+        for k, hk in ((1, h1), (2, h2), (3, h3), (4, h4)):
+            height = op('ADD', height, op('MULTIPLY', w(k), op('SUBTRACT', hk, 0.5)))
+        glow = op('ADD', op('MULTIPLY', w(4), g4), op('MULTIPLY', w(5), g5))
     sun = op('MULTIPLY', mr(sn.outputs['Z'], 0.3, 0.95), mr(noise(4.0), 0.25, 0.75, 0.5, 1.0))
     faded = N('ShaderNodeHueSaturation')
     faded.inputs['Saturation'].default_value = 0.55
@@ -739,15 +836,40 @@ def bake_weathering(objs, name, out_dir, size=1024, dirt_height=0.12, fade=0.4, 
         bpy.data.images.remove(i_met)
     i_orm = img(name + '_orm', True)
     i_orm.pixels.foreach_set(orm.ravel())
+    outputs = [(i_base, f'{name}_basecolor.jpg'), (i_orm, f'{name}_orm.jpg')]
+    if patterns:
+        # relief → tangent-space normal (UV1): a diffuse BSDF with the bumped normal, baked as NORMAL
+        bump = N('ShaderNodeBump')
+        bump.inputs['Distance'].default_value = normal_depth
+        L(height, bump.inputs['Height'])
+        dif = N('ShaderNodeBsdfDiffuse')
+        L(bump.outputs['Normal'], dif.inputs['Normal'])
+        L(dif.outputs['BSDF'], out.inputs['Surface'])
+        sc.render.bake.normal_space = 'TANGENT'
+        i_nrm = img(name + '_normal', True)
+        bake(i_nrm, 'NORMAL', samples=4)
+        L(emis.outputs['Emission'], out.inputs['Surface'])
+        # glow → emissive colour map: deep ember red in the dim parts, hot orange in the brightest cracks
+        gm = N('ShaderNodeMix')
+        gm.data_type = 'RGBA'
+        gm.inputs[6].default_value = (*srgb(glow_colors[0]), 1.0)
+        gm.inputs[7].default_value = (*srgb(glow_colors[1]), 1.0)
+        L(glow, gm.inputs[0])
+        g3e = N('ShaderNodeCombineColor')
+        for ch in ('Red', 'Green', 'Blue'):
+            L(glow, g3e.inputs[ch])
+        i_emi = img(name + '_emissive', False)
+        bake(i_emi, 'EMIT', mix(gm.outputs[2], g3e.outputs['Color'], 1.0, 'MULTIPLY'), samples=4)
+        outputs += [(i_nrm, f'{name}_normal.jpg'), (i_emi, f'{name}_emissive.jpg')]
     os.makedirs(out_dir, exist_ok=True)
     paths = []
-    for im, fn in ((i_base, f'{name}_basecolor.jpg'), (i_orm, f'{name}_orm.jpg')):
+    for im, fn in outputs:
         pth = os.path.join(out_dir, fn)
         im.filepath_raw = pth
         im.file_format = 'JPEG'
-        im.save(filepath=pth, quality=90)
+        im.save(filepath=pth, quality=92)
         paths.append(pth)
-    for im in (i_base, i_rough, i_ao, i_orm):
+    for im in [i_base, i_rough, i_ao] + [im for im, _ in outputs[1:]]:
         bpy.data.images.remove(im)
     for o in objs:
         o.data.materials.clear()

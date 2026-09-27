@@ -176,7 +176,7 @@ http://localhost:8341
 | Stage 2 | 背包、折叠椅 | ✔ `backpack.glb`（装满的软体包身、贴合包面的压缩带、扣具、弹力绳、防潮垫、缝线；约 1.5 万三角形、1.4 MB）· `chair.glb`（X 型折叠露营椅、下垂的座/背布、管套、杯托；约 6 千三角形、0.7 MB） |
 | Stage 3 | 提灯 | ✔ `lantern.glb`（防风煤油灯：冲压油壶、两侧进气管、烟罩、黄铜燃烧器与灯芯旋钮、护丝内的玻璃灯罩、提梁；搪瓷漆掉漆露钢、烟熏；约 1.1 万三角形、0.7 MB） |
 | Stage 4 | 水壶 + 支架 | ✔ `kettle.glb`（12 L 铸铁壶：圈足、铸造凸缘、卷口、壶盖与盖钮、渐细壶嘴、吊耳、带木握把的锻铁提梁；壶底烟熏、边缘磨亮、锈斑 · 锻铁四脚支架，带加固环，腿位于木柴之间；约 8.5 千三角形、0.7 MB） |
-| Stage 5 | 火把、松果、木柴、斧头、树桩等 | 待制作 |
+| Stage 5 | 火把、松果、木柴 ✔ · 斧头、劈柴桩、柴垛、杯子（待制作） | `torch.glb`（去皮弯木柄、浸油麻布火把头 + 螺旋布条 + 麻绳绑扎，余烬发光贴图；约 3.1 千三角形）· `pinecone.glb`（张开的松果，60 片带脊鳞片按黄金角排列，鳞尖风化；约 1.8 千三角形）· `firewood.glb`（3 段木柴：开裂树皮、锯面年轮、枝桠残桩，独立的炭化端带发光龟裂纹） |
 
 重新生成资产（需要 Blender 4.x，或 `pip install bpy`）：
 
@@ -186,6 +186,9 @@ blender --background --python tools/blender/build_backpack.py  # backpack.glb + 
 blender --background --python tools/blender/build_chair.py     # chair.glb + assets/source/chair/chair.blend
 blender --background --python tools/blender/build_lantern.py   # lantern.glb + assets/source/lantern/lantern.blend
 blender --background --python tools/blender/build_kettle.py    # kettle.glb (kettle + stand) + assets/source/kettle/kettle.blend
+blender --background --python tools/blender/build_torch.py     # torch.glb
+blender --background --python tools/blender/build_pinecone.py  # pinecone.glb
+blender --background --python tools/blender/build_firewood.py  # firewood.glb (3 log variants)
 ```
 
 也可以直接打开 `assets/source/<名称>/<名称>.blend` 修改，再按 `docs/asset-pipeline.md` §6 的设置导出覆盖 `assets/models/<名称>.glb`。
@@ -251,7 +254,7 @@ Campfire/
 ├── tools/blender/       # Blender 资产构建脚本（bpy）
 ├── assets/
 │   ├── textures/
-│   ├── models/          # 正式 .glb 资产（帐篷、背包、折叠椅、提灯、水壶 …）
+│   ├── models/          # 正式 .glb 资产（帐篷、背包、折叠椅、提灯、水壶、火把、松果、木柴 …）
 │   │   └── procedural/  # 程序化模型导出 + models.json（覆盖开关）
 │   └── source/          # 资产源文件 .blend
 ├── scripts/

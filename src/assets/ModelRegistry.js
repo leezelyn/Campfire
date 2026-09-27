@@ -97,21 +97,36 @@ export const MODEL_REGISTRY = {
   },
 
   // —— 以下为后续阶段的契约（ready: false：尚无正式资产，场景继续使用程序化模型）——
+  // Stage 5 —— 火把 / 松果 / 木柴（tools/blender/build_torch.py、build_pinecone.py、build_firewood.py）
   torch: {
-    ready: false, stage: 5, url: 'assets/models/torch.glb',
-    root: 'TorchRoot',
+    ready: true, stage: 5, url: 'assets/models/torch.glb',
+    root: 'TorchRoot',                                        // 原点 = 柄底，轴向 +Y
     anchors: { flame: 'FlameAnchor', grip: 'GripAnchor?' },   // 替代硬编码的火把头 y=1.292
     parts: { handle: 'Handle', wrap: 'Wrap' },
-    materials: { ember: 'TorchEmber' }
+    materials: { ember: 'TorchEmber' },                       // 余烬贴图的强度由引燃进度驱动
+    prepare(model) {
+      model.materials.ember.emissiveIntensity = 0;            // 未点燃
+    }
   },
   pinecone: {
-    ready: false, stage: 5, url: 'assets/models/pinecone.glb',
-    root: 'PineconeRoot', perInstanceMaterials: ['*']          // 逐个燃烧变色
+    ready: true, stage: 5, url: 'assets/models/pinecone.glb',
+    root: 'PineconeRoot',                                     // 原点 = 几何中心（飞行中绕它翻滚）
+    parts: { cone: 'Cone' },
+    materials: { body: 'Pinecone' },
+    perInstanceMaterials: ['*'],                              // 逐个燃烧变色
+    prepare(model) {
+      model.materials.body.emissive.setHex(0xff4a0a);         // 燃烧余光色；强度由燃烧进度驱动
+      model.materials.body.emissiveIntensity = 0;
+    }
   },
-  log: {
-    ready: false, stage: 5, url: 'assets/models/props/log.glb',
-    root: 'LogRoot', parts: { charEnd: 'CharEnd?' }
-  },
+  // 三段不同长短粗细的木柴（同一 GLB 的三个根节点）：原点 = 外端截面中心，轴向 +Y；
+  // Bark 材质（颜色随燃尽变黑）与 Charcoal 材质（龟裂余烬发光）由火堆逻辑全局驱动，三段共享
+  ...Object.fromEntries([[1, 0.66], [2, 0.70], [3, 0.74]].map(([i, length]) => [`log-${i}`, {
+    ready: true, stage: 5, url: 'assets/models/firewood.glb', length,
+    root: `Log${i}Root`,
+    parts: { bark: 'Bark', charEnd: 'CharEnd' },
+    materials: { bark: 'Bark', char: 'Charcoal' }
+  }])),
   axe: {
     ready: false, stage: 5, url: 'assets/models/props/axe.glb',
     root: 'AxeRoot', anchors: { blade: 'BladeEdge', grip: 'GripAnchor?' }
