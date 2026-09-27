@@ -817,6 +817,7 @@ orm[..., 3] = 1.0
 img_orm = bpy.data.images.new('TentCanvas_ORM', BAKE, BAKE, alpha=False)
 img_orm.colorspace_settings.name = 'Non-Color'
 img_orm.pixels.foreach_set(orm.ravel())
+img_orm.scale(512, 512)                          # ORM is low-frequency: 512 is plenty (texture budget §5)
 p_base = save(img_base, 'tent_canvas_basecolor.jpg', 'JPEG', 90)
 p_orm = save(img_orm, 'tent_canvas_orm.jpg', 'JPEG', 92)
 for im in (img_ao, img_rough):

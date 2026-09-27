@@ -120,7 +120,7 @@ bpy.context.view_layer.update()
 
 C.unwrap_uv1(pieces, uv0_tile=0.1)
 base_p, orm_p, nrm_p, _ = C.bake_weathering(
-    pieces, 'woodpile', TEX, size=1024, dirt_height=0.0, fade=0.3, edge_wear=0.15, ao_distance=0.05,
+    pieces, 'woodpile', TEX, size=512, dirt_height=0.0, fade=0.3, edge_wear=0.15, ao_distance=0.05,
     seed=61.0, patterns=True, normal_depth=0.003)
 M = C.baked_material('StackedWood', base_p, orm_p, nrm_p, 0.9, normal_uv='UV1')
 for o in pieces:

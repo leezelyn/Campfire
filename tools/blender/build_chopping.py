@@ -231,7 +231,7 @@ bpy.context.view_layer.update()
 parts = stump + axe + chop_log + chop_half
 C.unwrap_uv1(parts, uv0_tile=0.1)
 base_p, orm_p, nrm_p, emi_p = C.bake_weathering(
-    parts, 'chopping', TEX, size=1024, dirt_height=0.07, fade=0.25, edge_wear=0.2, ao_distance=0.04,
+    parts, 'chopping', TEX, size=512, dirt_height=0.07, fade=0.25, edge_wear=0.2, ao_distance=0.04,
     seed=53.0, patterns=True, normal_depth=0.003, metal=True, tip_color='#a3a6aa')
 M_WOOD = C.baked_material('ChopWood', base_p, orm_p, nrm_p, 0.9, normal_uv='UV1')
 M_STEEL = C.baked_material('AxeSteel', base_p, orm_p, None)

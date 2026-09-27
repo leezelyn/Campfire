@@ -92,7 +92,7 @@ C.empty('GripAnchor', (0.002, 0.003, 0.58), root, size=0.04)
 parts = [staff] + knots + head
 C.unwrap_uv1(parts, uv0_tile=0.08)
 base_p, orm_p, nrm_p, emi_p = C.bake_weathering(
-    parts, 'torch', TEX, size=1024, dirt_height=0.06, fade=0.15, edge_wear=0.25, ao_distance=0.03,
+    parts, 'torch', TEX, size=512, dirt_height=0.06, fade=0.15, edge_wear=0.25, ao_distance=0.03,
     seed=31.0, patterns=True, glow_z=(1.17, 1.29), normal_depth=0.0015)
 weave = C.weave_normal('torch_weave_normal', TEX, size=256, period=5, strength=2.0)
 M_WOOD = C.baked_material('TorchWood', base_p, orm_p, nrm_p, 0.8, normal_uv='UV1')

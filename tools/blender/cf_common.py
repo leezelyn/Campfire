@@ -535,7 +535,7 @@ def bake_weathering(objs, name, out_dir, size=1024, dirt_height=0.12, fade=0.4, 
                     stains=0.0, soot_front=0.0, ao_distance=0.2, seed=0.0,
                     chips=0.0, chip_color='#6c6a64', soot_top=None, metal=False,
                     soot_bottom=None, rust=0.0, patterns=False, glow_z=(0.0, 1.0), normal_depth=0.0025,
-                    tip_color=None, glow_colors=('#7a1e04', '#ffb066')):
+                    tip_color=None, glow_colors=('#7a1e04', '#ffb066'), aux_size=512):
     """Bake a weathered base colour and ORM (AO / roughness / metal) into UV1 for `objs`.
 
     Each object supplies its own look through custom properties:
@@ -556,6 +556,8 @@ def bake_weathering(objs, name, out_dir, size=1024, dirt_height=0.12, fade=0.4, 
     (`normal_depth` m) and an emissive map (glowing char cracks / ember gradient) ramping from
     glow_colors[0] (dim) to glow_colors[1] (hottest) — keep it deep if the runtime drives intensity > 1.
     `tip_color`: a per-vertex float attribute `cf_tip` (0..1) blends toward this colour (weathered scale tips).
+    Texture budget: the base colour is saved at `size`; ORM / normal / emissive (low-frequency data) are
+    downsampled to `aux_size` (default 512) — docs/asset-pipeline.md §5.
     Returns [basecolor, orm] (+ [normal, emissive] when patterns=True).
     """
     sc = bpy.context.scene
@@ -863,6 +865,9 @@ def bake_weathering(objs, name, out_dir, size=1024, dirt_height=0.12, fade=0.4, 
         outputs += [(i_nrm, f'{name}_normal.jpg'), (i_emi, f'{name}_emissive.jpg')]
     os.makedirs(out_dir, exist_ok=True)
     paths = []
+    for im, fn in outputs[1:]:
+        if aux_size < size:
+            im.scale(aux_size, aux_size)
     for im, fn in outputs:
         pth = os.path.join(out_dir, fn)
         im.filepath_raw = pth

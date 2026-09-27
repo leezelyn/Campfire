@@ -5981,9 +5981,10 @@ function step(dt, t) {
   }
   moonLight.intensity = P.moonInt * (1 - 0.7 * cloudNow);      // 云厚则月光与月面压暗
   // 天光随月光强度联动（满月夜更亮），云层遮挡时减弱；月亮方位的天空辉光同步。
-  // 饱和曲线：默认 0.12 → 1.05，滑块拉满 0.6 → 1.57（线性时高达 3.45，浅色沙滩过曝发白）
+  // 饱和曲线：默认 0.12 → 1.25，滑块拉满 0.6 → 1.77（线性时高达 3.45，浅色沙滩过曝发白）。
+  // 基线 0.45 → 0.65（2.0 复查）：火光照不到的地面从死黑变为可辨的深蓝灰冷补光，满月沙滩仍无过曝
   const mk = 6 * P.moonInt;
-  hemiLight.intensity = (0.45 + 1.43 * mk / (1 + mk)) * (1 - 0.35 * cloudNow);
+  hemiLight.intensity = (0.65 + 1.43 * mk / (1 + mk)) * (1 - 0.35 * cloudNow);
   skyDome.material.uniforms.uGlowK.value = (1 - 0.6 * cloudNow) * Math.min(1.5, P.moonInt / 0.12);
   if (moonMat) {                                               // 与天穹着色器同一公式取月亮方向天空色
     const su = skyDome.material.uniforms;
