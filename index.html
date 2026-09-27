@@ -436,7 +436,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { mergeVertices, mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { AssetManager, createTentInstance } from './src/assets/AssetManager.js';
+import { AssetManager, createTentInstance, createLanternInstance } from './src/assets/AssetManager.js';
 
 /* ============================================================
    基础场景
@@ -474,7 +474,7 @@ renderer.toneMappingExposure = 1.1;
 // 3D 资产管线（src/assets）：Blender 制作的正式模型在场景构建开始时就发起下载，
 // 与后面的程序化建模并行；用到时再 await（见帐篷摆放处）
 const assets = new AssetManager({ renderer });
-assets.preload(['tent', 'backpack', 'chair']);
+assets.preload(['tent', 'backpack', 'chair', 'lantern']);
 document.getElementById('app').appendChild(renderer.domElement);
 
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -2135,7 +2135,7 @@ let chopRig = null;   // 劈柴桩（含斧头）——「劈柴」互动在它�
 // 提灯暖光。原先不投影：灯芯离地仅 0.22 m，平方反比下正下方地面照度是 1 m 外的 20 倍，
 // 又没有油壶遮挡 → 灯脚一大片过曝白斑（海边沙地尤其明显）。真实提灯正下方被油壶挡住，
 // 光落在四周成环。改为投影（低分辨率、近距 far，只渲染附近几件道具，开销很小）
-const LANTERN_INT = 3.2;   // 原 4.5：浅色沙地上灯脚光斑仍过曝；煤油灯实际约 1~2 cd
+const LANTERN_INT = 2.8;   // 原 4.5→3.2：浅色沙地上灯脚光斑过曝；Stage 3 提灯火苗降到 0.155 m（原 ≈0.22 m），同距离地面照度 ≈1.2×，再降到 2.8。煤油灯实际约 1~2 cd
 const campLight = new THREE.PointLight(0xffb259, 0, 7, 2);
 campLight.name = 'LanternLight';
 campLight.castShadow = true;
@@ -2986,9 +2986,20 @@ async function assetOrFallback(key, fallback) {
   // Stage 2：折叠椅 / 登山包（Blender GLB，失败回退 makeChair / makeBackpack）
   placeProp(await assetOrFallback('chair', makeChair), 0.15, 1.95, true, 'chair');            // 折叠椅：右侧，面向火
   placeProp(await assetOrFallback('backpack', makeBackpack), 0.62, 2.15, true, 'backpack');   // 背包：椅旁
-  const lant = makeLantern();
-  lant.group.scale.setScalar(0.58);                // 约为背包高度的 58%，符合便携煤油灯比例
+  // Stage 3：提灯（Blender GLB，按实物尺寸建模）。点光与前 3 只飞蛾对齐契约锚点 LightAnchor，
+  // 火苗材质 LanternGlow 交给闪烁 / 生日换色；GLB 不可用时回退 makeLantern()（程序模型需缩放 0.58）
+  let lant;
+  try {
+    const m = await createLanternInstance(assets);
+    lant = { group: m.root, globe: m.anchors.light };
+    lanternGlowMat = m.materials.flame;
+  } catch (e) {
+    console.warn('[assets] lantern.glb unavailable, falling back to the procedural lantern:', e.message || e);
+    lant = makeLantern();
+    lant.group.scale.setScalar(0.58);
+  }
   placeProp(lant.group, 1.25, 2.5, true, 'lantern');        // 提灯：左侧前景
+  lant.group.updateMatrixWorld(true);
   lant.globe.getWorldPosition(campLight.position); // 点光对齐灯芯世界坐标
   campLight.intensity = LANTERN_INT;
   // 炊具由并行实现的「煮水」水壶三脚架（kettleRig）承担，此处不再重复造一套
@@ -6311,10 +6322,10 @@ const EXPORT_TARGETS = [
   'tent', 'chair', 'backpack', 'lantern', 'woodpile', 'stump', 'mug', 'firepit'
 ];
 // 可被 Blender 模型覆盖的目标（其余只导出：地形被树木/散布物的落地计算依赖，火堆柴有坍塌动画）
-// 帐篷、折叠椅、登山包已升级为正式 GLB 资产（ModelRegistry），不再走覆盖流程
+// 帐篷、折叠椅、登山包、提灯已升级为正式 GLB 资产（ModelRegistry），不再走覆盖流程
 const OVERRIDABLE = new Set([
   'mountains', 'coast', 'spruce', 'pine', 'palm',
-  'lantern', 'woodpile', 'stump', 'mug'
+  'woodpile', 'stump', 'mug'
 ]);
 
 // 导出源：mode = 'scene' 整个场景 / 'world' 保留世界坐标 / 'local' 以自身原点导出（去掉摆放位移与朝向，保留缩放）
@@ -6641,18 +6652,12 @@ function overrideProp(key, loaded) {
     group.remove(c);
     if (c !== oldAxe) disposeReplaced(c);
   }
-  group.scale.set(1, 1, 1);                    // 导出时根节点已带上原缩放（如提灯 0.58）
+  group.scale.set(1, 1, 1);                    // 导出时根节点已带上原缩放
   group.add(loaded);
   if (key === 'stump') {
     const axe = loaded.getObjectByName('Axe');
     if (axe) group.userData.axe = axe;
     else if (oldAxe) group.add(oldAxe);       // 模型里没有斧头：保留程序化斧头，劈柴动画照常
-  }
-  if (key === 'lantern') {
-    group.updateMatrixWorld(true);
-    const sock = loaded.getObjectByName('lanternLightSocket');
-    if (sock) sock.getWorldPosition(campLight.position);   // 灯光对齐新模型的灯芯挂点
-    loaded.traverse(o => { if (o.isMesh && o.material.name === 'LanternGlow') lanternGlowMat = o.material; });
   }
   applyPropShadows(group);   // GLTFLoader 把 glTF extras 放进 userData：noCastShadow 等标记随 Blender 往返保留
 }

@@ -47,14 +47,22 @@ export const MODEL_REGISTRY = {
     anchors: { seat: 'SeatAnchor?' }
   },
 
-  // —— 以下为后续阶段的契约（ready: false：尚无正式资产，场景继续使用程序化模型）——
+  // Stage 3 —— 煤油提灯（tools/blender/build_lantern.py）
   lantern: {
-    ready: false, stage: 3, url: 'assets/models/lantern.glb',
+    ready: true, stage: 3, url: 'assets/models/lantern.glb',
     root: 'LanternRoot',
-    anchors: { light: 'LightAnchor' },          // campLight + 飞蛾环绕中心
+    anchors: { light: 'LightAnchor' },          // campLight + 飞蛾环绕中心（火苗中心）
     parts: { glass: 'Glass', flame: 'Flame', bail: 'BailPivot?' },
     materials: { flame: 'LanternGlow' },        // 闪烁 / 生日换色
     prepare(model, THREE) {
+      // 灯体近场：campLight 就在火苗中心，油壶肩部 / 侧管内侧 / 护丝离它只有 3~10 cm，按点光源 1/d² 会被打成白色。
+      // 真实火苗是几厘米的面光源，且大部分被燃烧器挡住——这里只对提灯自身材质把衰减距离下限设为 50 cm（three 默认 10 cm），
+      // 否则灯体（蓝漆×橙光≈中性灰）被推到饱和白。其他物体与地面光斑完全不受影响
+      const nearField = new Set();
+      model.root.traverse(o => {
+        if (o.isMesh && o !== model.parts.flame) nearField.add(o.material);
+      });
+      for (const m of nearField) softNearField(m, THREE, 0.25);
       // 玻璃：加载后替换为 MeshPhysicalMaterial（只渲染外表面，避免被罩内灯光打爆）
       model.parts.glass.traverse(o => {
         if (!o.isMesh) return;
@@ -68,6 +76,8 @@ export const MODEL_REGISTRY = {
       });
     }
   },
+
+  // —— 以下为后续阶段的契约（ready: false：尚无正式资产，场景继续使用程序化模型）——
   kettle: {
     ready: false, stage: 4, url: 'assets/models/kettle.glb',
     root: 'KettleRoot',
@@ -104,6 +114,23 @@ export const MODEL_REGISTRY = {
     root: 'StumpRoot', anchors: { top: 'TopAnchor', axeSocket: 'AxeSocket' }
   }
 };
+
+/**
+ * 点光源近场软化：把 three 的距离衰减 1 / max(d², 0.01) 的下限改为 minSq（d² 下限）。
+ * 只用于"光源装在自己体内"的道具（提灯）；不改 ShaderChunk 全局，只改该材质的程序。
+ */
+function softNearField(material, THREE, minSq) {
+  if (!material || material.userData.nearField) return;
+  const chunk = THREE.ShaderChunk.lights_pars_begin;
+  const needle = 'max( pow( lightDistance, decayExponent ), 0.01 )';
+  if (!chunk.includes(needle)) return;                     // three 版本改动时静默退回默认衰减
+  const patched = chunk.replace(needle, `max( pow( lightDistance, decayExponent ), ${minSq.toFixed(4)} )`);
+  material.userData.nearField = minSq;
+  material.onBeforeCompile = shader => {
+    shader.fragmentShader = shader.fragmentShader.replace('#include <lights_pars_begin>', patched);
+  };
+  material.customProgramCacheKey = () => `nearField:${minSq}`;
+}
 
 // GLTFLoader 会清洗节点名：空格→'_'，去掉 '.:/[]'（Blender 的 "Door.001" 变成 "Door001"）
 const sanitize = name => name.replace(/\s/g, '_').replace(/[[\].:/]/g, '');

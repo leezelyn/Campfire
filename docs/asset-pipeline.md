@@ -20,7 +20,7 @@ Campfire/
 │   ├── tent.glb                  # Stage 1 ✔
 │   ├── backpack.glb              # Stage 2 ✔
 │   ├── chair.glb                 # Stage 2 ✔
-│   ├── lantern.glb               # Stage 3
+│   ├── lantern.glb               # Stage 3 ✔
 │   ├── kettle.glb                # Stage 4（含 kettle-stand）
 │   ├── torch.glb                 # Stage 5
 │   ├── pinecone.glb              # Stage 5
@@ -31,12 +31,14 @@ Campfire/
 ├── assets/source/                # 资产源文件（.blend），供继续在 Blender 中修改
 │   ├── tent/tent.blend
 │   ├── backpack/backpack.blend
-│   └── chair/chair.blend         # 每个目录另有 preview.png（Cycles 预览）；textures/ 为构建中间产物，已 gitignore
+│   ├── chair/chair.blend
+│   └── lantern/lantern.blend     # 每个目录另有 preview.png（Cycles 预览）；textures/ 为构建中间产物，已 gitignore
 └── tools/blender/                # 可复现的 Blender 构建脚本（bpy）
     ├── cf_common.py              # Stage 2 起的公共工具：软体造型、表面投影织带、UV0/UV1、烘焙旧化、glTF 导出
     ├── build_tent.py
     ├── build_backpack.py
-    └── build_chair.py
+    ├── build_chair.py
+    └── build_lantern.py
 ```
 
 规则：
@@ -57,7 +59,7 @@ Campfire/
 | 变换 | 根对象 **Scale = 1、Rotation = 0**，导出前 Apply All Transforms |
 | 禁止 | 在 Three.js 里用 `scale.set(0.013…)`、`rotation.set(…)` 补救导出错误 |
 
-v1 遗留的违例（替换时一并消除）：提灯组 `scale 0.58`、水壶 `scale 0.14 + rotation.y π`。
+v1 遗留的违例（替换时一并消除）：~~提灯组 `scale 0.58`~~（Stage 3 已消除，仅程序化回退仍用）、水壶 `scale 0.14 + rotation.y π`。
 
 ---
 
@@ -196,6 +198,25 @@ const tent = await createTentInstance(assets); // 失败时抛错 → 回退程�
 - 颜色在篝火暖光下校准：椅布去饱和的铁锈红 `#6b3a2f`，背包橄榄绿 `#4b5034`（初版在火光中过饱和 / 发白，已调暗）。
 - 场景端仅把 `makeChair()` / `makeBackpack()` 换成 `assetOrFallback('chair' | 'backpack', …)`；摆放、阴影、导出逻辑不变，GLB 缺失时自动回退到程序化模型。
 
+## 7.3 Stage 3 实测（lantern.glb）
+
+| 项 | 数值 |
+|---|---|
+| 三角形 | 10 824（预算 10 k，超 8%：主要是护丝、提梁等细管的圆周段数，已降到 6~8 边） |
+| 材质 | 5：LanternPaint（烘焙）、LanternWire、LanternBrass、LanternGlass（运行时替换）、LanternGlow |
+| 贴图 | 漆面 baseColor + ORM 1024 JPEG（UV1）：褪色、灯脚污垢、烟罩烟熏、**掉漆露钢（ORM 蓝通道 = 金属度）+ 锈边** |
+| 文件 | 0.70 MB（.blend 0.64 MB） |
+| 校验 | gltf-validator 0 error / 0 warning |
+| 尺寸 | 实物比例：油壶 Ø 0.21 m，灯帽顶 0.32 m，提梁立起 0.38 m；场景里不再缩放（旧程序模型需 `scale 0.58`） |
+| 契约 | `LanternRoot` / `LightAnchor`（火苗中心，y = 0.155）/ `Glass` / `Flame`（`LanternGlow`）/ `BailPivot`（提梁向后倾 26° 靠放） |
+| 阴影 | 只有油壶、燃烧器、烟罩投影；侧管、护丝、提梁、玻璃、火苗 `noCastShadow`（灯光就在它们内侧几厘米，否则地面出现放射状硬条纹） |
+| 构建 | `tools/blender/build_lantern.py`，约 2 min |
+
+灯光复查（Stage 3）：
+- **灯体近场过曝**：点光在火苗中心，油壶肩、侧管内侧距光源 3~10 cm，按 1/d²（three 默认下限 10 cm）被推到饱和白（蓝漆 × 橙光 ≈ 中性灰 → 白）。`ModelRegistry.lantern.prepare` 只对提灯自身材质把衰减距离下限改为 50 cm（`softNearField`，通过 `onBeforeCompile` 局部修改，不动全局 ShaderChunk）；地面光斑与其他物体不变。依据：真实火苗是几厘米的面光源、且大部分被燃烧器挡住。
+- **地面光斑**：火苗高度从 ≈0.22 m 降到 0.155 m，相同距离地面照度约 ×1.2，`LANTERN_INT` 3.2 → 2.8。
+- 漆面粗糙度 0.62、钢丝 0.6、黄铜 0.45：避免火苗在侧管上形成白色高光条。
+
 ## 8. 分阶段计划
 
 每个阶段：Blender 制作 → 导出校验 → 接入（保留程序化回退）→ **与上一版本截图对比** → 再进入下一阶段。
@@ -204,7 +225,7 @@ const tent = await createTentInstance(assets); // 失败时抛错 → 回退程�
 |---|---|---|
 | **1** ✔ | **Tent** + AssetManager / ModelRegistry 基础设施 | 帆布质感、接缝、褶皱、门帘厚度、拉绳；帐内暖光位置不变；冷暖关系 |
 | **2** ✔ | **Backpack + Chair** | 布料/织带/扣具的粗糙度差异；营地生活感 |
-| 3 | Lantern | 喷漆金属、黄铜、玻璃、局部光与火光叠加 |
+| **3** ✔ | **Lantern** | 喷漆金属、黄铜、玻璃、局部光与火光叠加 |
 | 4 | Kettle + Stand | 与放置动画、受热自发光、蒸汽锚点结合 |
 | 5 | Torch / Pinecone / Logs / Axe / Stump / WoodPile / Mug | 互动锚点、实例化与材质克隆 |
 

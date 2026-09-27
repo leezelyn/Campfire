@@ -174,7 +174,7 @@ http://localhost:8341
 |---|---|---|
 | Stage 1 | 帐篷 Tent | ✔ `assets/models/tent.glb`（帆布织纹、接缝、张力褶皱、门帘、拉绳、帐内陈设；约 2.6 万三角形、1.3 MB） |
 | Stage 2 | 背包、折叠椅 | ✔ `backpack.glb`（装满的软体包身、贴合包面的压缩带、扣具、弹力绳、防潮垫、缝线；约 1.5 万三角形、1.4 MB）· `chair.glb`（X 型折叠露营椅、下垂的座/背布、管套、杯托；约 6 千三角形、0.7 MB） |
-| Stage 3 | 提灯 | 待制作 |
+| Stage 3 | 提灯 | ✔ `lantern.glb`（防风煤油灯：冲压油壶、两侧进气管、烟罩、黄铜燃烧器与灯芯旋钮、护丝内的玻璃灯罩、提梁；搪瓷漆掉漆露钢、烟熏；约 1.1 万三角形、0.7 MB） |
 | Stage 4 | 水壶 + 支架 | 待制作 |
 | Stage 5 | 火把、松果、木柴、斧头、树桩等 | 待制作 |
 
@@ -184,6 +184,7 @@ http://localhost:8341
 blender --background --python tools/blender/build_tent.py      # 输出 assets/models/tent.glb 与 assets/source/tent/tent.blend
 blender --background --python tools/blender/build_backpack.py  # backpack.glb + assets/source/backpack/backpack.blend
 blender --background --python tools/blender/build_chair.py     # chair.glb + assets/source/chair/chair.blend
+blender --background --python tools/blender/build_lantern.py   # lantern.glb + assets/source/lantern/lantern.blend
 ```
 
 也可以直接打开 `assets/source/<名称>/<名称>.blend` 修改，再按 `docs/asset-pipeline.md` §6 的设置导出覆盖 `assets/models/<名称>.glb`。
@@ -205,11 +206,11 @@ blender --background --python tools/blender/build_chair.py     # chair.glb + ass
 | 地形 | 当前场景的地面网格 | — |
 | 远山（森林） / 海岸丘陵与礁岛 | 远景山体 + 林带剪影 | ✓ |
 | 云杉 / 松树 / 棕榈 | 单棵树模板（树根在原点，高约 7~9 m） | ✓ 替换该树种的全部树 |
-| 帐篷 / 折叠椅 / 背包 | 当前场景中的模型（已是正式 GLB 资产） | —（直接编辑 `assets/source/<名称>/<名称>.blend`） |
-| 提灯 / 柴垛 / 劈柴桩与斧头 / 搪瓷杯 | 单个道具（以自身原点导出） | ✓ |
+| 帐篷 / 折叠椅 / 背包 / 提灯 | 当前场景中的模型（已是正式 GLB 资产） | —（直接编辑 `assets/source/<名称>/<名称>.blend`） |
+| 柴垛 / 劈柴桩与斧头 / 搪瓷杯 | 单个道具（以自身原点导出） | ✓ |
 | 火堆（石圈与木柴） | 石块、木柴、炭块 | —（木柴有坍塌动画） |
 
-`assets/models/procedural/` 中已附带 9 个可覆盖模型的 .glb，可直接用 Blender 打开。
+`assets/models/procedural/` 中已附带 8 个可覆盖模型的 .glb，可直接用 Blender 打开。
 
 ### 2. 在 Blender 中打开
 
@@ -223,14 +224,13 @@ blender --background --python tools/blender/build_chair.py     # chair.glb + ass
 
 ### 3. 微调后放回页面
 
-1. 在 Blender 中 `文件 ▸ 导出 ▸ glTF 2.0`，格式选 **glTF Binary (.glb)**，以**同名**保存到 `assets/models/procedural/`（如 `lantern.glb`）
-2. 编辑 `assets/models/procedural/models.json`，把对应项改为 `true`（也可以写成文件名，如 `"lantern": "lantern_v2.glb"`）
-3. 刷新页面（需通过 HTTP 服务打开）。浏览器控制台会打印 `[models] lantern ← assets/models/procedural/lantern.glb`
+1. 在 Blender 中 `文件 ▸ 导出 ▸ glTF 2.0`，格式选 **glTF Binary (.glb)**，以**同名**保存到 `assets/models/procedural/`（如 `mug.glb`）
+2. 编辑 `assets/models/procedural/models.json`，把对应项改为 `true`（也可以写成文件名，如 `"mug": "mug_v2.glb"`）
+3. 刷新页面（需通过 HTTP 服务打开）。浏览器控制台会打印 `[models] mug ← assets/models/procedural/mug.glb`
 
 注意事项：
 
 - **保持根对象在原点、不要移动整体位置**：摆放位置与朝向由页面决定，模型文件只描述模型本身
-- 提灯：灯光挂点为名为 `lanternLightSocket` 的空物体，火苗材质名为 `LanternGlow`（闪烁动画依赖）
 - 劈柴桩：斧头对象名为 `Axe`（劈柴动画依赖）；若删掉则沿用程序化斧头
 - 导出时勾选 `Include ▸ Custom Properties`，可保留 `noCastShadow` 等阴影标记
 - 灯光强度单位与 Blender 不同，若导入整个场景后灯光过暗/过亮，可在导入选项的 `Lighting Mode` 中调整
@@ -250,7 +250,7 @@ Campfire/
 ├── tools/blender/       # Blender 资产构建脚本（bpy）
 ├── assets/
 │   ├── textures/
-│   ├── models/          # 正式 .glb 资产（tent.glb、backpack.glb、chair.glb …）
+│   ├── models/          # 正式 .glb 资产（帐篷、背包、折叠椅、提灯 …）
 │   │   └── procedural/  # 程序化模型导出 + models.json（覆盖开关）
 │   └── source/          # 资产源文件 .blend
 ├── scripts/

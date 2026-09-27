@@ -1,7 +1,7 @@
 {
   "_readme": [
-    "程序模型覆盖（v1）：把某个模型设为 true，页面启动时用本目录下的 <名称>.glb 替换程序化模型（也可以写文件名，如 \"lantern\": \"lantern_v2.glb\"）。正式资产（如帐篷）不在这里，见 docs/asset-pipeline.md。",
-    "Procedural overrides (v1): set a key to true to load assets/models/procedural/<key>.glb instead of the procedural model (or give a file name, e.g. \"lantern\": \"lantern_v2.glb\"). Production assets such as the tent are loaded by the AssetManager instead — see docs/asset-pipeline.md.",
+    "程序模型覆盖（v1）：把某个模型设为 true，页面启动时用本目录下的 <名称>.glb 替换程序化模型（也可以写文件名，如 \"mug\": \"mug_v2.glb\"）。正式资产（如帐篷）不在这里，见 docs/asset-pipeline.md。",
+    "Procedural overrides (v1): set a key to true to load assets/models/procedural/<key>.glb instead of the procedural model (or give a file name, e.g. \"mug\": \"mug_v2.glb\"). Production assets such as the tent are loaded by the AssetManager instead — see docs/asset-pipeline.md.",
     "手続きモデルの置き換え（v1）：true にすると、このフォルダの <名前>.glb で手続き生成モデルを置き換えます。正式アセット（テントなど）は docs/asset-pipeline.md を参照。"
   ],
   "use": {
@@ -10,7 +10,6 @@
     "spruce": false,
     "pine": false,
     "palm": false,
-    "lantern": false,
     "woodpile": false,
     "stump": false,
     "mug": false

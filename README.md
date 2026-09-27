@@ -173,7 +173,7 @@ Real-world camp props are being upgraded from "procedurally assembled Three.js p
 |---|---|---|
 | Stage 1 | Tent | ✔ `assets/models/tent.glb` (canvas weave, seams, tension folds, door roll, guy lines, lived-in interior; ~26k triangles, 1.3 MB) |
 | Stage 2 | Backpack, chair | ✔ `backpack.glb` (soft-packed body, surface-hugging compression straps, buckles, bungee, foam mat, stitching; ~15k tris, 1.4 MB) · `chair.glb` (X-frame camp chair, sagging slings, sleeves, drink holder; ~6k tris, 0.7 MB) |
-| Stage 3 | Lantern | planned |
+| Stage 3 | Lantern | ✔ `lantern.glb` (hurricane lantern: stamped fount, side air tubes, chimney hood, brass burner and wick knob, glass globe in a wire guard, bail; chipped enamel with bare-steel flakes and soot; ~11k tris, 0.7 MB) |
 | Stage 4 | Kettle + stand | planned |
 | Stage 5 | Torch, pinecone, logs, axe, stump… | planned |
 
@@ -183,6 +183,7 @@ Rebuild the assets (Blender 4.x, or `pip install bpy`):
 blender --background --python tools/blender/build_tent.py      # writes assets/models/tent.glb and assets/source/tent/tent.blend
 blender --background --python tools/blender/build_backpack.py  # backpack.glb + assets/source/backpack/backpack.blend
 blender --background --python tools/blender/build_chair.py     # chair.glb + assets/source/chair/chair.blend
+blender --background --python tools/blender/build_lantern.py   # lantern.glb + assets/source/lantern/lantern.blend
 ```
 
 You can also open `assets/source/<name>/<name>.blend`, edit it and export over `assets/models/<name>.glb` with the settings in `docs/asset-pipeline.md` §6.
@@ -204,11 +205,11 @@ At the bottom of the parameter panel, **"Blender models"**: pick a target → cl
 | Terrain | Ground mesh of the current scene | — |
 | Mountains (forest) / Coast hills & islets | Distant ranges + treeline silhouettes | ✓ |
 | Spruce / Pine / Palm | One tree template (root at origin, ~7–9 m tall) | ✓ replaces every tree of that species |
-| Tent / Chair / Backpack | The in-scene model (already production GLBs) | — (edit `assets/source/<name>/<name>.blend`) |
-| Lantern / Woodpile / Stump & axe / Mug | A single prop (exported around its own origin) | ✓ |
+| Tent / Chair / Backpack / Lantern | The in-scene model (already production GLBs) | — (edit `assets/source/<name>/<name>.blend`) |
+| Woodpile / Stump & axe / Mug | A single prop (exported around its own origin) | ✓ |
 | Fire pit | Stones, logs, embers | — (the logs have a collapse animation) |
 
-`assets/models/procedural/` already contains `.glb` files for the 9 overridable models, ready to open in Blender.
+`assets/models/procedural/` already contains `.glb` files for the 8 overridable models, ready to open in Blender.
 
 ### 2. Open in Blender
 
@@ -222,14 +223,13 @@ At the bottom of the parameter panel, **"Blender models"**: pick a target → cl
 
 ### 3. Load your edits back
 
-1. In Blender, `File ▸ Export ▸ glTF 2.0`, format **glTF Binary (.glb)**, saved under the **same name** in `assets/models/procedural/` (e.g. `lantern.glb`)
-2. Edit `assets/models/procedural/models.json` and set that entry to `true` (or a file name, e.g. `"lantern": "lantern_v2.glb"`)
-3. Reload the page (served over HTTP). The browser console prints `[models] lantern ← assets/models/procedural/lantern.glb`
+1. In Blender, `File ▸ Export ▸ glTF 2.0`, format **glTF Binary (.glb)**, saved under the **same name** in `assets/models/procedural/` (e.g. `mug.glb`)
+2. Edit `assets/models/procedural/models.json` and set that entry to `true` (or a file name, e.g. `"mug": "mug_v2.glb"`)
+3. Reload the page (served over HTTP). The browser console prints `[models] mug ← assets/models/procedural/mug.glb`
 
 Notes:
 
 - **Keep the root at the origin**: placement and orientation are decided by the page; the file only describes the model
-- Lantern: the light anchor is an empty named `lanternLightSocket`, and the flame material is `LanternGlow` (used by the flicker)
 - Stump: the axe object is named `Axe` (used by the chopping animation); if removed, the procedural axe is kept
 - Enable `Include ▸ Custom Properties` when exporting to keep shadow flags such as `noCastShadow`
 - Light units differ from Blender's; if an imported full scene looks too dark or bright, adjust `Lighting Mode` in the import options
@@ -249,7 +249,7 @@ Campfire/
 ├── tools/blender/       # Blender asset build scripts (bpy)
 ├── assets/
 │   ├── textures/
-│   ├── models/          # production .glb assets (tent.glb, backpack.glb, chair.glb …)
+│   ├── models/          # production .glb assets (tent, backpack, chair, lantern …)
 │   │   └── procedural/  # procedural-model exports + models.json (override switches)
 │   └── source/          # asset source files (.blend)
 ├── scripts/

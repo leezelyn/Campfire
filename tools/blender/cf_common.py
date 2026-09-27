@@ -1,11 +1,11 @@
 """
 Campfire · shared Blender (bpy) helpers for asset build scripts.
 
-Used by build_backpack.py / build_chair.py (and later stages). Conventions (docs/asset-pipeline.md):
+Used by build_backpack.py / build_chair.py / build_lantern.py (and later stages). Conventions (docs/asset-pipeline.md):
 Blender Z-up, 1 unit = 1 m, the front of a prop faces Blender −Y (= glTF +Z), origin = ground contact.
 
 Main pieces
-    mesh / curve builders     mesh_object, curve_tube, superellipsoid, strip, surface_strip, dashes
+    mesh / curve builders     mesh_object, curve_tube, lathe, catmull, superellipsoid, strip, surface_strip, dashes
     surface queries           Surface (BVH over several objects: nearest point, ray hits)
     hardware                  rounded_box placed on a surface frame (buckles, sliders, caps)
     UV + bake                 unwrap_uv1 (+ uniform-texel UV0), weave_normal, bake_weathering
@@ -153,6 +153,50 @@ def resample(pts, n):
 
 
 # ------------------------------------------------------------------ superellipsoid (rounded soft shapes)
+def catmull(pts, per_seg=6):
+    """Centripetal-ish Catmull–Rom through `pts` (tuples) → dense polyline (wire paths, tubes)."""
+    P = [Vector(p) for p in pts]
+    P = [P[0] * 2 - P[1]] + P + [P[-1] * 2 - P[-2]]
+    out = []
+    for i in range(1, len(P) - 2):
+        p0, p1, p2, p3 = P[i - 1], P[i], P[i + 1], P[i + 2]
+        for k in range(per_seg):
+            t = k / per_seg
+            t2, t3 = t * t, t * t * t
+            out.append(tuple(0.5 * ((2 * p1) + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2
+                                    + (-p0 + 3 * p1 - 3 * p2 + p3) * t3)))
+    out.append(tuple(P[-2]))
+    return out
+
+
+def lathe(name, profile, segments=32, parent=None, smooth=True, loc=(0, 0, 0)):
+    """Revolve a (radius, z) profile around local Z. Profile ends with radius 0 become single pole vertices."""
+    verts, faces, rings = [], [], []
+    for r, z in profile:
+        if r < 1e-7:
+            rings.append([len(verts)])
+            verts.append((loc[0], loc[1], loc[2] + z))
+            continue
+        ring = []
+        for i in range(segments):
+            a = 2 * math.pi * i / segments
+            ring.append(len(verts))
+            verts.append((loc[0] + r * math.cos(a), loc[1] + r * math.sin(a), loc[2] + z))
+        rings.append(ring)
+    for a, b in zip(rings, rings[1:]):
+        if len(a) == 1 and len(b) == 1:
+            continue
+        for i in range(segments):
+            j = (i + 1) % segments
+            if len(a) == 1:
+                faces.append((a[0], b[j], b[i]))
+            elif len(b) == 1:
+                faces.append((a[i], a[j], b[0]))
+            else:
+                faces.append((a[i], a[j], b[j], b[i]))
+    return mesh_object(name, verts, faces, parent=parent, smooth=smooth)
+
+
 def superellipsoid(name, half, p=4.0, res=12, center=(0, 0, 0), deform=None, parent=None):
     """Rounded box |x/a|^p + |y/b|^p + |z/c|^p = 1 built from a subdivided cube (quads, welded).
     deform(v: Vector) -> Vector is applied in world space after placement."""
@@ -449,7 +493,8 @@ def unwrap_uv1(objs, uv0_tile, margin=0.004):
 
 # ------------------------------------------------------------------ weathering bake
 def bake_weathering(objs, name, out_dir, size=1024, dirt_height=0.12, fade=0.4, edge_wear=0.35,
-                    stains=0.0, soot_front=0.0, ao_distance=0.2, seed=0.0):
+                    stains=0.0, soot_front=0.0, ao_distance=0.2, seed=0.0,
+                    chips=0.0, chip_color='#6c6a64', soot_top=None, metal=False):
     """Bake a weathered base colour and ORM (AO / roughness / metal) into UV1 for `objs`.
 
     Each object supplies its own look through custom properties:
@@ -457,6 +502,9 @@ def bake_weathering(objs, name, out_dir, size=1024, dirt_height=0.12, fade=0.4, 
     Weathering (object space, origin on the ground, front = −Y):
         variation · sun fade on up-facing surfaces · ground dirt below `dirt_height` ·
         edge wear on convex edges (pointiness) · optional stains / soot · AO crease grime
+    Painted metal (metal=True): per-object `cf_metal`; `chips` > 0 flakes paint off convex edges and in
+    scattered spots, exposing bare metal (`chip_color`, metallic 1) ringed with rust;
+    `soot_top` = (z0, z1, amount) blackens surfaces above z0 (lamp chimneys, pot rims).
     """
     sc = bpy.context.scene
     sc.render.engine = 'CYCLES'
@@ -555,6 +603,23 @@ def bake_weathering(objs, name, out_dir, size=1024, dirt_height=0.12, fade=0.4, 
     if soot_front > 0:
         front = mr(sp.outputs['Y'], 0.0, -0.3)
         col = mix(col, srgb('#1c1b1a'), op('MULTIPLY', op('MULTIPLY', front, mr(noise(3.0), 0.3, 0.8)), soot_front))
+    soot = None
+    if soot_top is not None:
+        z0, z1, amt = soot_top
+        soot = op('MULTIPLY', mr(sp.outputs['Z'], z0, z1), op('MULTIPLY', mr(noise(6.0, 3.0), 0.25, 0.7, 0.55, 1.0), amt))
+        col = mix(col, srgb('#15130f'), soot)
+    chip = None
+    if chips > 0:
+        # one field drives chips (bare metal) and the rust ring around them
+        # edges only chip where the noise agrees (patchy, not an outline); flats chip only at rare peaks
+        field = op('ADD', op('MULTIPLY', mr(geo.outputs['Pointiness'], 0.5, 0.58), 0.35),
+                   op('ADD', op('MULTIPLY', mr(noise(38.0, 8.0, 0.75), 0.4, 0.7), 0.6),
+                      op('MULTIPLY', mr(noise(6.0, 3.0), 0.35, 0.65), 0.25)))
+        thr = 1.25 - 0.4 * chips
+        chip = mr(field, thr, thr + 0.015)
+        rust = op('SUBTRACT', mr(field, thr - 0.045, thr - 0.005), chip)
+        col = mix(col, srgb('#3d2719'), op('MULTIPLY', op('MAXIMUM', rust, 0.0), 0.65))
+        col = mix(col, srgb(chip_color), chip)
     ao = N('ShaderNodeAmbientOcclusion')
     ao.inputs['Distance'].default_value = ao_distance
     ao.samples = 12
@@ -566,9 +631,23 @@ def bake_weathering(objs, name, out_dir, size=1024, dirt_height=0.12, fade=0.4, 
     rough = op('ADD', attr_r.outputs['Fac'], mr(noise(10.0), 0.3, 0.7, -0.05, 0.05))
     rough = op('ADD', rough, op('MULTIPLY', dirt, 0.08))
     rough = op('ADD', rough, op('MULTIPLY', wear, 0.06))
+    if soot is not None:
+        rough = op('ADD', rough, op('MULTIPLY', soot, 0.35))
+    if chip is not None:
+        rough = op('ADD', op('MULTIPLY', rough, op('SUBTRACT', 1.0, chip)), op('MULTIPLY', chip, 0.48))
     r3 = N('ShaderNodeCombineColor')
     for ch in ('Red', 'Green', 'Blue'):
         L(rough, r3.inputs[ch])
+    m3 = None
+    if metal:
+        attr_m = N('ShaderNodeAttribute')
+        attr_m.attribute_type, attr_m.attribute_name = 'OBJECT', 'cf_metal'
+        met = attr_m.outputs['Fac']
+        if chip is not None:
+            met = op('MAXIMUM', met, chip)
+        m3 = N('ShaderNodeCombineColor')
+        for ch in ('Red', 'Green', 'Blue'):
+            L(met, m3.inputs[ch])
     target = N('ShaderNodeTexImage')
     nt.nodes.active = target
 
@@ -605,6 +684,11 @@ def bake_weathering(objs, name, out_dir, size=1024, dirt_height=0.12, fade=0.4, 
     orm[..., 0] = 0.3 + 0.7 * ao_px[..., 0]
     orm[..., 1] = np.clip(ro_px[..., 0], 0, 1)
     orm[..., 3] = 1
+    if m3 is not None:
+        i_met = img(name + '_metal', True)
+        bake(i_met, 'EMIT', m3.outputs['Color'])
+        orm[..., 2] = np.clip(np.array(i_met.pixels[:], np.float32).reshape(size, size, 4)[..., 0], 0, 1)
+        bpy.data.images.remove(i_met)
     i_orm = img(name + '_orm', True)
     i_orm.pixels.foreach_set(orm.ravel())
     os.makedirs(out_dir, exist_ok=True)
