@@ -172,18 +172,20 @@ Real-world camp props are being upgraded from "procedurally assembled Three.js p
 | Stage | Models | Status |
 |---|---|---|
 | Stage 1 | Tent | ✔ `assets/models/tent.glb` (canvas weave, seams, tension folds, door roll, guy lines, lived-in interior; ~26k triangles, 1.3 MB) |
-| Stage 2 | Backpack, chair | planned |
+| Stage 2 | Backpack, chair | ✔ `backpack.glb` (soft-packed body, surface-hugging compression straps, buckles, bungee, foam mat, stitching; ~15k tris, 1.4 MB) · `chair.glb` (X-frame camp chair, sagging slings, sleeves, drink holder; ~6k tris, 0.7 MB) |
 | Stage 3 | Lantern | planned |
 | Stage 4 | Kettle + stand | planned |
 | Stage 5 | Torch, pinecone, logs, axe, stump… | planned |
 
-Rebuild the tent (Blender 4.x, or `pip install bpy`):
+Rebuild the assets (Blender 4.x, or `pip install bpy`):
 
 ```bash
 blender --background --python tools/blender/build_tent.py      # writes assets/models/tent.glb and assets/source/tent/tent.blend
+blender --background --python tools/blender/build_backpack.py  # backpack.glb + assets/source/backpack/backpack.blend
+blender --background --python tools/blender/build_chair.py     # chair.glb + assets/source/chair/chair.blend
 ```
 
-You can also open `assets/source/tent/tent.blend`, edit it and export over `assets/models/tent.glb` with the settings in `docs/asset-pipeline.md` §6.
+You can also open `assets/source/<name>/<name>.blend`, edit it and export over `assets/models/<name>.glb` with the settings in `docs/asset-pipeline.md` §6.
 If a production asset fails to load (e.g. missing file), the page falls back to the original procedural model.
 
 ---
@@ -202,11 +204,11 @@ At the bottom of the parameter panel, **"Blender models"**: pick a target → cl
 | Terrain | Ground mesh of the current scene | — |
 | Mountains (forest) / Coast hills & islets | Distant ranges + treeline silhouettes | ✓ |
 | Spruce / Pine / Palm | One tree template (root at origin, ~7–9 m tall) | ✓ replaces every tree of that species |
-| Tent | The in-scene tent (already a production GLB) | — (edit `assets/source/tent/tent.blend`) |
-| Chair / Backpack / Lantern / Woodpile / Stump & axe / Mug | A single prop (exported around its own origin) | ✓ |
+| Tent / Chair / Backpack | The in-scene model (already production GLBs) | — (edit `assets/source/<name>/<name>.blend`) |
+| Lantern / Woodpile / Stump & axe / Mug | A single prop (exported around its own origin) | ✓ |
 | Fire pit | Stones, logs, embers | — (the logs have a collapse animation) |
 
-`assets/models/procedural/` already contains `.glb` files for the 11 overridable models, ready to open in Blender.
+`assets/models/procedural/` already contains `.glb` files for the 9 overridable models, ready to open in Blender.
 
 ### 2. Open in Blender
 
@@ -220,9 +222,9 @@ At the bottom of the parameter panel, **"Blender models"**: pick a target → cl
 
 ### 3. Load your edits back
 
-1. In Blender, `File ▸ Export ▸ glTF 2.0`, format **glTF Binary (.glb)**, saved under the **same name** in `assets/models/procedural/` (e.g. `chair.glb`)
-2. Edit `assets/models/procedural/models.json` and set that entry to `true` (or a file name, e.g. `"chair": "chair_v2.glb"`)
-3. Reload the page (served over HTTP). The browser console prints `[models] chair ← assets/models/procedural/chair.glb`
+1. In Blender, `File ▸ Export ▸ glTF 2.0`, format **glTF Binary (.glb)**, saved under the **same name** in `assets/models/procedural/` (e.g. `lantern.glb`)
+2. Edit `assets/models/procedural/models.json` and set that entry to `true` (or a file name, e.g. `"lantern": "lantern_v2.glb"`)
+3. Reload the page (served over HTTP). The browser console prints `[models] lantern ← assets/models/procedural/lantern.glb`
 
 Notes:
 
@@ -247,7 +249,7 @@ Campfire/
 ├── tools/blender/       # Blender asset build scripts (bpy)
 ├── assets/
 │   ├── textures/
-│   ├── models/          # production .glb assets (tent.glb …)
+│   ├── models/          # production .glb assets (tent.glb, backpack.glb, chair.glb …)
 │   │   └── procedural/  # procedural-model exports + models.json (override switches)
 │   └── source/          # asset source files (.blend)
 ├── scripts/

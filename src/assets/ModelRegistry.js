@@ -33,15 +33,21 @@ export const MODEL_REGISTRY = {
     }
   },
 
-  // —— 以下为后续阶段的契约（ready: false：尚无正式资产，场景继续使用程序化模型）——
+  // Stage 2 —— 登山包 / 折叠椅（tools/blender/build_backpack.py、build_chair.py）
+  // 业务逻辑不依赖内部网格，锚点均为可选（为将来"开盖 / 提起 / 坐下"预留）
   backpack: {
-    ready: false, stage: 2, url: 'assets/models/backpack.glb',
-    root: 'BackpackRoot', anchors: { handleL: 'HandleSocketL?', handleR: 'HandleSocketR?' }, parts: { lid: 'LidPivot?' }
+    ready: true, stage: 2, url: 'assets/models/backpack.glb',
+    root: 'BackpackRoot',
+    anchors: { handleL: 'HandleSocketL?', handleR: 'HandleSocketR?' },
+    parts: { lid: 'LidPivot?' }
   },
   chair: {
-    ready: false, stage: 2, url: 'assets/models/chair.glb',
-    root: 'ChairRoot', anchors: { seat: 'SeatAnchor?' }
+    ready: true, stage: 2, url: 'assets/models/chair.glb',
+    root: 'ChairRoot',
+    anchors: { seat: 'SeatAnchor?' }
   },
+
+  // —— 以下为后续阶段的契约（ready: false：尚无正式资产，场景继续使用程序化模型）——
   lantern: {
     ready: false, stage: 3, url: 'assets/models/lantern.glb',
     root: 'LanternRoot',

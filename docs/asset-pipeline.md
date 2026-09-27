@@ -18,8 +18,8 @@ Campfire/
 │   └── ModelRegistry.js          # 每个模型的契约（节点名 → anchors / parts）与加载后处理
 ├── assets/models/                # ★ 正式资产：Blender 制作的 .glb（运行时加载）
 │   ├── tent.glb                  # Stage 1 ✔
-│   ├── backpack.glb              # Stage 2（待制作）
-│   ├── chair.glb                 # Stage 2
+│   ├── backpack.glb              # Stage 2 ✔
+│   ├── chair.glb                 # Stage 2 ✔
 │   ├── lantern.glb               # Stage 3
 │   ├── kettle.glb                # Stage 4（含 kettle-stand）
 │   ├── torch.glb                 # Stage 5
@@ -29,9 +29,14 @@ Campfire/
 │       ├── models.json           # 覆盖开关
 │       └── *.glb
 ├── assets/source/                # 资产源文件（.blend），供继续在 Blender 中修改
-│   └── tent/tent.blend
+│   ├── tent/tent.blend
+│   ├── backpack/backpack.blend
+│   └── chair/chair.blend         # 每个目录另有 preview.png（Cycles 预览）；textures/ 为构建中间产物，已 gitignore
 └── tools/blender/                # 可复现的 Blender 构建脚本（bpy）
-    └── build_tent.py
+    ├── cf_common.py              # Stage 2 起的公共工具：软体造型、表面投影织带、UV0/UV1、烘焙旧化、glTF 导出
+    ├── build_tent.py
+    ├── build_backpack.py
+    └── build_chair.py
 ```
 
 规则：
@@ -173,14 +178,32 @@ const tent = await createTentInstance(assets); // 失败时抛错 → 回退程�
 | 契约 | `TentRoot` / `Door` / `InteriorLightAnchor` 齐全；`GuyLines`、`InteriorLampBody/Glow` 带 `noCastShadow` |
 | 构建 | `tools/blender/build_tent.py`（建模 → UV → Cycles 烘焙 → 导出），约 1.5 min（CPU） |
 
+## 7.2 Stage 2 实测（backpack.glb / chair.glb）
+
+| 项 | backpack | chair |
+|---|---|---|
+| 三角形 | 14 678（预算 15 k） | 6 244（预算 8 k） |
+| 材质 | 6：PackFabric、Webbing、HardwarePlastic、HardwareMetal、Thread、Cord | 5：ChairFabric、ChairFrame、ChairPlastic、ChairRivet、Thread |
+| 贴图 | 布料 baseColor + ORM 1024 JPEG（UV1，含灰尘/褪色/磨边/污渍）；平纹法线 512（UV0）；织带斜纹法线 256（UV0） | 布料 baseColor + ORM 1024 JPEG（UV1）；平纹法线 512（UV0） |
+| 文件 | 1.42 MB（.blend 1.2 MB） | 0.73 MB（.blend 0.7 MB） |
+| 校验 | gltf-validator 0 error（仅"运行时生成切线"提示） | 同左 |
+| 契约 | `BackpackRoot`；可选 `LidPivot`（顶袋铰点）、`HandleSocketL/R`（提手） | `ChairRoot`；可选 `SeatAnchor`（坐姿参考点） |
+| 构建 | `tools/blender/build_backpack.py`，约 1.5 min | `tools/blender/build_chair.py`，约 1 min |
+
+实现要点：
+- 包体/顶袋/侧袋用超椭球 + 形变做"装满东西"的软体轮廓；压缩带、顶袋带用 BVH 投影贴合包面（不再是悬空方条）。
+- 椅子为 X 型交叉腿 + 扶手的露营折叠椅；座/背布为有下垂量的吊床式网格，双面渲染（`cull=False`），管套、包边、杯托独立建模。
+- 颜色在篝火暖光下校准：椅布去饱和的铁锈红 `#6b3a2f`，背包橄榄绿 `#4b5034`（初版在火光中过饱和 / 发白，已调暗）。
+- 场景端仅把 `makeChair()` / `makeBackpack()` 换成 `assetOrFallback('chair' | 'backpack', …)`；摆放、阴影、导出逻辑不变，GLB 缺失时自动回退到程序化模型。
+
 ## 8. 分阶段计划
 
 每个阶段：Blender 制作 → 导出校验 → 接入（保留程序化回退）→ **与上一版本截图对比** → 再进入下一阶段。
 
 | Stage | 内容 | 验证重点 |
 |---|---|---|
-| **1** | **Tent** + AssetManager / ModelRegistry 基础设施 | 帆布质感、接缝、褶皱、门帘厚度、拉绳；帐内暖光位置不变；冷暖关系 |
-| 2 | Backpack + Chair | 布料/织带/扣具的粗糙度差异；营地生活感 |
+| **1** ✔ | **Tent** + AssetManager / ModelRegistry 基础设施 | 帆布质感、接缝、褶皱、门帘厚度、拉绳；帐内暖光位置不变；冷暖关系 |
+| **2** ✔ | **Backpack + Chair** | 布料/织带/扣具的粗糙度差异；营地生活感 |
 | 3 | Lantern | 喷漆金属、黄铜、玻璃、局部光与火光叠加 |
 | 4 | Kettle + Stand | 与放置动画、受热自发光、蒸汽锚点结合 |
 | 5 | Torch / Pinecone / Logs / Axe / Stump / WoodPile / Mug | 互动锚点、实例化与材质克隆 |

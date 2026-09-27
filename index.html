@@ -474,7 +474,7 @@ renderer.toneMappingExposure = 1.1;
 // 3D 资产管线（src/assets）：Blender 制作的正式模型在场景构建开始时就发起下载，
 // 与后面的程序化建模并行；用到时再 await（见帐篷摆放处）
 const assets = new AssetManager({ renderer });
-assets.preload(['tent']);
+assets.preload(['tent', 'backpack', 'chair']);
 document.getElementById('app').appendChild(renderer.domElement);
 
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -2950,6 +2950,15 @@ function makeLantern() {
 }
 
 let tentGlow = null;   // 帐内暖光（挂在场景根部，收纳道具时仅归零强度，防止灯数变化触发重编译）
+// 正式 GLB 资产（ModelRegistry）优先；不可用（文件缺失、契约节点缺失）时回退程序化模型
+async function assetOrFallback(key, fallback) {
+  try {
+    return (await assets.create(key)).root;
+  } catch (e) {
+    console.warn(`[assets] ${key}.glb unavailable, falling back to the procedural model:`, e.message || e);
+    return fallback();
+  }
+}
 {
   // Stage 1：帐篷改用 Blender 制作的 GLB（tools/blender/build_tent.py → assets/models/tent.glb），
   // 通过模型契约拿到帐内暖光锚点；GLB 不可用时回退到程序化 makeTent()
@@ -2974,8 +2983,9 @@ let tentGlow = null;   // 帐内暖光（挂在场景根部，收纳道具时仅
     tentGlow = tent.userData.innerGlow;
     scene.attach(tentGlow);                        // 保持世界位置不变，脱离道具组
   }
-  placeProp(makeChair(), 0.15, 1.95, true, 'chair');        // 折叠椅：右侧，面向火
-  placeProp(makeBackpack(), 0.62, 2.15, true, 'backpack');  // 背包：椅旁
+  // Stage 2：折叠椅 / 登山包（Blender GLB，失败回退 makeChair / makeBackpack）
+  placeProp(await assetOrFallback('chair', makeChair), 0.15, 1.95, true, 'chair');            // 折叠椅：右侧，面向火
+  placeProp(await assetOrFallback('backpack', makeBackpack), 0.62, 2.15, true, 'backpack');   // 背包：椅旁
   const lant = makeLantern();
   lant.group.scale.setScalar(0.58);                // 约为背包高度的 58%，符合便携煤油灯比例
   placeProp(lant.group, 1.25, 2.5, true, 'lantern');        // 提灯：左侧前景
@@ -6301,10 +6311,10 @@ const EXPORT_TARGETS = [
   'tent', 'chair', 'backpack', 'lantern', 'woodpile', 'stump', 'mug', 'firepit'
 ];
 // 可被 Blender 模型覆盖的目标（其余只导出：地形被树木/散布物的落地计算依赖，火堆柴有坍塌动画）
-// 帐篷已升级为正式 GLB 资产（ModelRegistry: tent），不再走覆盖流程
+// 帐篷、折叠椅、登山包已升级为正式 GLB 资产（ModelRegistry），不再走覆盖流程
 const OVERRIDABLE = new Set([
   'mountains', 'coast', 'spruce', 'pine', 'palm',
-  'chair', 'backpack', 'lantern', 'woodpile', 'stump', 'mug'
+  'lantern', 'woodpile', 'stump', 'mug'
 ]);
 
 // 导出源：mode = 'scene' 整个场景 / 'world' 保留世界坐标 / 'local' 以自身原点导出（去掉摆放位移与朝向，保留缩放）

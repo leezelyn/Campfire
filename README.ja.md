@@ -175,18 +175,20 @@ http://localhost:8341
 | 段階 | モデル | 状態 |
 |---|---|---|
 | Stage 1 | テント | ✔ `assets/models/tent.glb`（帆布の織り目、縫い目、張力のしわ、巻き上げた入口、張り綱、生活感のある室内；約 2.6 万三角形、1.3 MB） |
-| Stage 2 | バックパック、椅子 | 予定 |
+| Stage 2 | バックパック、椅子 | ✔ `backpack.glb`（荷物の詰まった柔らかな本体、面に沿うコンプレッションストラップ、バックル、バンジーコード、マット、縫い目；約 1.5 万三角形、1.4 MB）· `chair.glb`（X フレームのキャンプチェア、たわんだ座面／背布、スリーブ、ドリンクホルダー；約 6 千三角形、0.7 MB） |
 | Stage 3 | ランタン | 予定 |
 | Stage 4 | ケトル + スタンド | 予定 |
 | Stage 5 | 松明、松ぼっくり、薪、斧、薪割り台など | 予定 |
 
-テントの再生成（Blender 4.x、または `pip install bpy`）：
+アセットの再生成（Blender 4.x、または `pip install bpy`）：
 
 ```bash
 blender --background --python tools/blender/build_tent.py      # assets/models/tent.glb と assets/source/tent/tent.blend を出力
+blender --background --python tools/blender/build_backpack.py  # backpack.glb + assets/source/backpack/backpack.blend
+blender --background --python tools/blender/build_chair.py     # chair.glb + assets/source/chair/chair.blend
 ```
 
-`assets/source/tent/tent.blend` を直接編集し、`docs/asset-pipeline.md` §6 の設定で `assets/models/tent.glb` に書き出すこともできます。
+`assets/source/<名前>/<名前>.blend` を直接編集し、`docs/asset-pipeline.md` §6 の設定で `assets/models/<名前>.glb` に書き出すこともできます。
 正式アセットの読み込みに失敗した場合（ファイルがない等）は、元の手続きモデルに自動で戻ります。
 
 ---
@@ -205,11 +207,11 @@ blender --background --python tools/blender/build_tent.py      # assets/models/t
 | 地形 | 現在のシーンの地面メッシュ | — |
 | 遠くの山（森） / 海岸の丘と岩礁 | 遠景の山体 + 林帯シルエット | ✓ |
 | トウヒ / マツ / ヤシ | 1 本分の樹木テンプレート（根元が原点、高さ約 7〜9 m） | ✓ その樹種をすべて置き換え |
-| テント | シーン内のテント（すでに正式 GLB アセット） | —（`assets/source/tent/tent.blend` を編集） |
-| 椅子 / バックパック / ランタン / 薪の山 / 薪割り台と斧 / マグ | 単体の小道具（自身の原点基準） | ✓ |
+| テント / 椅子 / バックパック | シーン内のモデル（すでに正式 GLB アセット） | —（`assets/source/<名前>/<名前>.blend` を編集） |
+| ランタン / 薪の山 / 薪割り台と斧 / マグ | 単体の小道具（自身の原点基準） | ✓ |
 | 焚き火（石と薪） | 石、薪、熾火 | —（薪に崩れるアニメーションがあるため） |
 
-`assets/models/procedural/` には置き換え可能な 11 モデルの .glb が同梱されており、そのまま Blender で開けます。
+`assets/models/procedural/` には置き換え可能な 9 モデルの .glb が同梱されており、そのまま Blender で開けます。
 
 ### 2. Blender で開く
 
@@ -223,9 +225,9 @@ blender --background --python tools/blender/build_tent.py      # assets/models/t
 
 ### 3. 調整後にページへ戻す
 
-1. Blender で `ファイル ▸ エクスポート ▸ glTF 2.0`、形式は **glTF Binary (.glb)**、`assets/models/procedural/` に**同じ名前**で保存（例：`chair.glb`）
-2. `assets/models/procedural/models.json` の該当項目を `true` に変更（ファイル名も指定可、例：`"chair": "chair_v2.glb"`）
-3. ページを再読み込み（HTTP サーバー経由）。ブラウザのコンソールに `[models] chair ← assets/models/procedural/chair.glb` と表示されます
+1. Blender で `ファイル ▸ エクスポート ▸ glTF 2.0`、形式は **glTF Binary (.glb)**、`assets/models/procedural/` に**同じ名前**で保存（例：`lantern.glb`）
+2. `assets/models/procedural/models.json` の該当項目を `true` に変更（ファイル名も指定可、例：`"lantern": "lantern_v2.glb"`）
+3. ページを再読み込み（HTTP サーバー経由）。ブラウザのコンソールに `[models] lantern ← assets/models/procedural/lantern.glb` と表示されます
 
 注意：
 
@@ -250,7 +252,7 @@ Campfire/
 ├── tools/blender/       # Blender アセットビルドスクリプト（bpy）
 ├── assets/
 │   ├── textures/
-│   ├── models/          # 正式 .glb アセット（tent.glb …）
+│   ├── models/          # 正式 .glb アセット（tent.glb、backpack.glb、chair.glb …）
 │   │   └── procedural/  # 手続きモデルの書き出し + models.json（置き換え設定）
 │   └── source/          # アセットのソースファイル（.blend）
 ├── scripts/

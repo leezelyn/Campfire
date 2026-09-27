@@ -203,10 +203,12 @@
 
 ## 4. 替换优先级结论
 
-| 阶段 | 模型 | 原因 |
-|---|---|---|
-| Stage 1 | **Tent** | 最大、最靠前、最粗糙（828 三角形、纯色、无纹理） |
-| Stage 2 | Backpack + Chair | 营地生活感；无逻辑依赖，风险最低 |
-| Stage 3 | Lantern | 验证金属/玻璃/局部光；需要 `LightAnchor` 和发光材质契约 |
-| Stage 4 | Kettle + KettleStand | 验证 GLB 与放置动画、受热发光、蒸汽锚点结合 |
-| Stage 5 | Torch / Pinecone / Logs / Axe / Stump / WoodPile / Mug | 互动小物件，锚点多但单个简单 |
+| 阶段 | 模型 | 原因 | 进度 |
+|---|---|---|---|
+| Stage 1 | **Tent** | 最大、最靠前、最粗糙（828 三角形、纯色、无纹理） | ✔ `tent.glb`（25.7 k 三角形） |
+| Stage 2 | Backpack + Chair | 营地生活感；无逻辑依赖，风险最低 | ✔ `backpack.glb`（14.7 k）、`chair.glb`（6.2 k） |
+| Stage 3 | Lantern | 验证金属/玻璃/局部光；需要 `LightAnchor` 和发光材质契约 | — |
+| Stage 4 | Kettle + KettleStand | 验证 GLB 与放置动画、受热发光、蒸汽锚点结合 | — |
+| Stage 5 | Torch / Pinecone / Logs / Axe / Stump / WoodPile / Mug | 互动小物件，锚点多但单个简单 | — |
+
+已替换的模型仍保留 `makeTent()` / `makeBackpack()` / `makeChair()` 作为 GLB 缺失时的回退，实测数据见 `asset-pipeline.md` §7。

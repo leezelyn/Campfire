@@ -3,3 +3,4 @@
 # Blender backups and bake intermediates (textures are packed into the .blend and embedded in the .glb)
 *.blend1
 /assets/source/*/textures/
+__pycache__/
