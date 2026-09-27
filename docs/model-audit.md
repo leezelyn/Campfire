@@ -209,6 +209,6 @@
 | Stage 2 | Backpack + Chair | 营地生活感；无逻辑依赖，风险最低 | ✔ `backpack.glb`（14.7 k）、`chair.glb`（6.2 k） |
 | Stage 3 | Lantern | 验证金属/玻璃/局部光；需要 `LightAnchor` 和发光材质契约 | ✔ `lantern.glb`（10.8 k），去掉 `scale 0.58` |
 | Stage 4 | Kettle + KettleStand | 验证 GLB 与放置动画、受热发光、蒸汽锚点结合 | ✔ `kettle.glb`（8.5 k），去掉 `scale 0.14 + rotation.y π` |
-| Stage 5 | Torch / Pinecone / Logs / Axe / Stump / WoodPile / Mug | 互动小物件，锚点多但单个简单 | 5a ✔ `torch.glb`（3.1 k）、`pinecone.glb`（1.8 k）、`firewood.glb`（3 段）；5b 斧头 / 劈柴桩 / 柴垛 / 杯子待做 |
+| Stage 5 | Torch / Pinecone / Logs / Axe / Stump / WoodPile / Mug | 互动小物件，锚点多但单个简单 | 5a ✔ `torch.glb`（3.1 k）、`pinecone.glb`（1.8 k）、`firewood.glb`（3 段）；5b ✔ `chopping.glb`（桩 + 斧 + 待劈原木 / 半瓣）、`woodpile.glb`、`mug.glb` |
 
-已替换的模型仍保留 `makeTent()` / `makeBackpack()` / `makeChair()` / `makeLantern()` / 程序化水壶与支架 / `makeTorchModel()` / 程序化松果与木柴 作为 GLB 缺失时的回退，实测数据见 `asset-pipeline.md` §7。
+已替换的模型仍保留 `makeTent()` / `makeBackpack()` / `makeChair()` / `makeLantern()` / 程序化水壶与支架 / `makeTorchModel()` / 程序化松果与木柴 / `makeStump()` / `makeWoodPile()` / `makeMug()` 作为 GLB 缺失时的回退，实测数据见 `asset-pipeline.md` §7。

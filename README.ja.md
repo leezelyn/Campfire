@@ -178,7 +178,7 @@ http://localhost:8341
 | Stage 2 | バックパック、椅子 | ✔ `backpack.glb`（荷物の詰まった柔らかな本体、面に沿うコンプレッションストラップ、バックル、バンジーコード、マット、縫い目；約 1.5 万三角形、1.4 MB）· `chair.glb`（X フレームのキャンプチェア、たわんだ座面／背布、スリーブ、ドリンクホルダー；約 6 千三角形、0.7 MB） |
 | Stage 3 | ランタン | ✔ `lantern.glb`（ハリケーンランタン：プレス成形のタンク、左右の給気管、フード、真鍮バーナーと芯ノブ、ワイヤーガード内のガラスホヤ、ハンドル；ホーロー塗装の剥げと煤；約 1.1 万三角形、0.7 MB） |
 | Stage 4 | ケトル + スタンド | ✔ `kettle.glb`（12 L 鋳鉄ケトル：高台、鋳造フランジ、巻き口、蓋とつまみ、先細りの注ぎ口、吊り耳、木製グリップ付き鍛鉄ハンドル；底の煤、角の擦れ、錆 · 補強リング付きの鍛鉄 4 脚スタンド、脚は薪の間；約 8.5 千三角形、0.7 MB） |
-| Stage 5 | 松明、松ぼっくり、薪 ✔ · 斧、薪割り台、薪の山、マグ（予定） | `torch.glb`（皮を剥いだ曲がり木の柄、油を染み込ませた麻布の頭部に螺旋の布と麻ひもの結束、残り火の発光マップ；約 3.1 千三角形）· `pinecone.glb`（開いた松ぼっくり、黄金角で並ぶ稜のある鱗片 60 枚、先端の風化；約 1.8 千三角形）· `firewood.glb`（薪 3 種：割れた樹皮、木口の年輪、枝の切り株、発光する亀甲状のひび割れを持つ独立した炭化部） |
+| Stage 5 | 松明、松ぼっくり、薪、手斧、薪割り台、薪の山、マグ ✔ | `torch.glb`（皮を剥いだ曲がり木の柄、油を染み込ませた麻布の頭部に螺旋の布と麻ひもの結束、残り火の発光マップ；約 3.1 千三角形）· `pinecone.glb`（開いた松ぼっくり、黄金角で並ぶ稜のある鱗片 60 枚、先端の風化；約 1.8 千三角形）· `firewood.glb`（薪 3 種：割れた樹皮、木口の年輪、枝の切り株、発光する亀甲状のひび割れを持つ独立した炭化部）· `chopping.glb`（年輪・斧の跡・割れのある薪割り台 + 曲がったヒッコリー柄の鍛造手斧、刃を台に食い込ませて静置；薪割りアニメーション用の丸太と半割りも同梱）· `woodpile.glb`（3 段 9 本の割り薪：樹皮 / 割り面の木目 / 木口の年輪）· `mug.glb`（欠けのある白いホーローマグ、紺の縁、溶接ハンドル、中にコーヒー） |
 
 アセットの再生成（Blender 4.x、または `pip install bpy`）：
 
@@ -191,6 +191,9 @@ blender --background --python tools/blender/build_kettle.py    # kettle.glb (ket
 blender --background --python tools/blender/build_torch.py     # torch.glb
 blender --background --python tools/blender/build_pinecone.py  # pinecone.glb
 blender --background --python tools/blender/build_firewood.py  # firewood.glb (3 log variants)
+blender --background --python tools/blender/build_chopping.py  # chopping.glb (stump + hatchet + log / half to split)
+blender --background --python tools/blender/build_woodpile.py  # woodpile.glb
+blender --background --python tools/blender/build_mug.py       # mug.glb
 ```
 
 `assets/source/<名前>/<名前>.blend` を直接編集し、`docs/asset-pipeline.md` §6 の設定で `assets/models/<名前>.glb` に書き出すこともできます。
@@ -212,11 +215,10 @@ blender --background --python tools/blender/build_firewood.py  # firewood.glb (3
 | 地形 | 現在のシーンの地面メッシュ | — |
 | 遠くの山（森） / 海岸の丘と岩礁 | 遠景の山体 + 林帯シルエット | ✓ |
 | トウヒ / マツ / ヤシ | 1 本分の樹木テンプレート（根元が原点、高さ約 7〜9 m） | ✓ その樹種をすべて置き換え |
-| テント / 椅子 / バックパック / ランタン | シーン内のモデル（すでに正式 GLB アセット） | —（`assets/source/<名前>/<名前>.blend` を編集） |
-| 薪の山 / 薪割り台と斧 / マグ | 単体の小道具（自身の原点基準） | ✓ |
+| テント / 椅子 / バックパック / ランタン / 薪の山 / 薪割り台と斧 / マグ | シーン内のモデル（すでに正式 GLB アセット） | —（`assets/source/<名前>/<名前>.blend` を編集） |
 | 焚き火（石と薪） | 石、薪、熾火 | —（薪に崩れるアニメーションがあるため） |
 
-`assets/models/procedural/` には置き換え可能な 8 モデルの .glb が同梱されており、そのまま Blender で開けます。
+`assets/models/procedural/` には置き換え可能な 5 モデル（遠景の山、海岸、トウヒ、マツ、ヤシ）の .glb が同梱されており、そのまま Blender で開けます。
 
 ### 2. Blender で開く
 
@@ -230,14 +232,13 @@ blender --background --python tools/blender/build_firewood.py  # firewood.glb (3
 
 ### 3. 調整後にページへ戻す
 
-1. Blender で `ファイル ▸ エクスポート ▸ glTF 2.0`、形式は **glTF Binary (.glb)**、`assets/models/procedural/` に**同じ名前**で保存（例：`mug.glb`）
-2. `assets/models/procedural/models.json` の該当項目を `true` に変更（ファイル名も指定可、例：`"mug": "mug_v2.glb"`）
-3. ページを再読み込み（HTTP サーバー経由）。ブラウザのコンソールに `[models] mug ← assets/models/procedural/mug.glb` と表示されます
+1. Blender で `ファイル ▸ エクスポート ▸ glTF 2.0`、形式は **glTF Binary (.glb)**、`assets/models/procedural/` に**同じ名前**で保存（例：`pine.glb`）
+2. `assets/models/procedural/models.json` の該当項目を `true` に変更（ファイル名も指定可、例：`"pine": "pine_v2.glb"`）
+3. ページを再読み込み（HTTP サーバー経由）。ブラウザのコンソールに `[models] pine ← assets/models/procedural/pine.glb` と表示されます
 
 注意：
 
 - **ルートオブジェクトは原点のまま動かさない**：配置と向きはページ側が決め、ファイルはモデル自体だけを表します
-- 薪割り台：斧のオブジェクト名は `Axe`（薪割りアニメーションに使用）。削除した場合は手続き生成の斧を使います
 - エクスポート時に `Include ▸ Custom Properties` を有効にすると `noCastShadow` などの影設定が保持されます
 - ライトの強度単位は Blender と異なります。シーン全体を読み込んで明るさが合わない場合は、インポート設定の `Lighting Mode` で調整してください
 
@@ -256,7 +257,7 @@ Campfire/
 ├── tools/blender/       # Blender アセットビルドスクリプト（bpy）
 ├── assets/
 │   ├── textures/
-│   ├── models/          # 正式 .glb アセット（テント、バックパック、椅子、ランタン、ケトル、松明、松ぼっくり、薪 …）
+│   ├── models/          # 正式 .glb アセット（すべてのキャンプ小道具 …）
 │   │   └── procedural/  # 手続きモデルの書き出し + models.json（置き換え設定）
 │   └── source/          # アセットのソースファイル（.blend）
 ├── scripts/

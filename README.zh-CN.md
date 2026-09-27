@@ -176,7 +176,7 @@ http://localhost:8341
 | Stage 2 | 背包、折叠椅 | ✔ `backpack.glb`（装满的软体包身、贴合包面的压缩带、扣具、弹力绳、防潮垫、缝线；约 1.5 万三角形、1.4 MB）· `chair.glb`（X 型折叠露营椅、下垂的座/背布、管套、杯托；约 6 千三角形、0.7 MB） |
 | Stage 3 | 提灯 | ✔ `lantern.glb`（防风煤油灯：冲压油壶、两侧进气管、烟罩、黄铜燃烧器与灯芯旋钮、护丝内的玻璃灯罩、提梁；搪瓷漆掉漆露钢、烟熏；约 1.1 万三角形、0.7 MB） |
 | Stage 4 | 水壶 + 支架 | ✔ `kettle.glb`（12 L 铸铁壶：圈足、铸造凸缘、卷口、壶盖与盖钮、渐细壶嘴、吊耳、带木握把的锻铁提梁；壶底烟熏、边缘磨亮、锈斑 · 锻铁四脚支架，带加固环，腿位于木柴之间；约 8.5 千三角形、0.7 MB） |
-| Stage 5 | 火把、松果、木柴 ✔ · 斧头、劈柴桩、柴垛、杯子（待制作） | `torch.glb`（去皮弯木柄、浸油麻布火把头 + 螺旋布条 + 麻绳绑扎，余烬发光贴图；约 3.1 千三角形）· `pinecone.glb`（张开的松果，60 片带脊鳞片按黄金角排列，鳞尖风化；约 1.8 千三角形）· `firewood.glb`（3 段木柴：开裂树皮、锯面年轮、枝桠残桩，独立的炭化端带发光龟裂纹） |
+| Stage 5 | 火把、松果、木柴、斧头、劈柴桩、柴垛、搪瓷杯 ✔ | `torch.glb`（去皮弯木柄、浸油麻布火把头 + 螺旋布条 + 麻绳绑扎，余烬发光贴图；约 3.1 千三角形）· `pinecone.glb`（张开的松果，60 片带脊鳞片按黄金角排列，鳞尖风化；约 1.8 千三角形）· `firewood.glb`（3 段木柴：开裂树皮、锯面年轮、枝桠残桩，独立的炭化端带发光龟裂纹）· `chopping.glb`（带年轮、斧痕、裂纹的劈柴桩 + 锻铁手斧与弯曲山核桃木柄，斧刃吃进桩面静置；另含劈柴动画用的待劈原木与半瓣）· `woodpile.glb`（三层 9 块劈柴：树皮 / 劈面木纹 / 端面年轮）· `mug.glb`（掉瓷的白色搪瓷杯，藏青杯沿，焊接把手，杯里有咖啡） |
 
 重新生成资产（需要 Blender 4.x，或 `pip install bpy`）：
 
@@ -189,6 +189,9 @@ blender --background --python tools/blender/build_kettle.py    # kettle.glb (ket
 blender --background --python tools/blender/build_torch.py     # torch.glb
 blender --background --python tools/blender/build_pinecone.py  # pinecone.glb
 blender --background --python tools/blender/build_firewood.py  # firewood.glb (3 log variants)
+blender --background --python tools/blender/build_chopping.py  # chopping.glb (stump + hatchet + log / half to split)
+blender --background --python tools/blender/build_woodpile.py  # woodpile.glb
+blender --background --python tools/blender/build_mug.py       # mug.glb
 ```
 
 也可以直接打开 `assets/source/<名称>/<名称>.blend` 修改，再按 `docs/asset-pipeline.md` §6 的设置导出覆盖 `assets/models/<名称>.glb`。
@@ -210,11 +213,10 @@ blender --background --python tools/blender/build_firewood.py  # firewood.glb (3
 | 地形 | 当前场景的地面网格 | — |
 | 远山（森林） / 海岸丘陵与礁岛 | 远景山体 + 林带剪影 | ✓ |
 | 云杉 / 松树 / 棕榈 | 单棵树模板（树根在原点，高约 7~9 m） | ✓ 替换该树种的全部树 |
-| 帐篷 / 折叠椅 / 背包 / 提灯 | 当前场景中的模型（已是正式 GLB 资产） | —（直接编辑 `assets/source/<名称>/<名称>.blend`） |
-| 柴垛 / 劈柴桩与斧头 / 搪瓷杯 | 单个道具（以自身原点导出） | ✓ |
+| 帐篷 / 折叠椅 / 背包 / 提灯 / 柴垛 / 劈柴桩与斧头 / 搪瓷杯 | 当前场景中的模型（已是正式 GLB 资产） | —（直接编辑 `assets/source/<名称>/<名称>.blend`） |
 | 火堆（石圈与木柴） | 石块、木柴、炭块 | —（木柴有坍塌动画） |
 
-`assets/models/procedural/` 中已附带 8 个可覆盖模型的 .glb，可直接用 Blender 打开。
+`assets/models/procedural/` 中已附带 5 个可覆盖模型（远山、海岸、云杉、松树、棕榈）的 .glb，可直接用 Blender 打开。
 
 ### 2. 在 Blender 中打开
 
@@ -228,14 +230,13 @@ blender --background --python tools/blender/build_firewood.py  # firewood.glb (3
 
 ### 3. 微调后放回页面
 
-1. 在 Blender 中 `文件 ▸ 导出 ▸ glTF 2.0`，格式选 **glTF Binary (.glb)**，以**同名**保存到 `assets/models/procedural/`（如 `mug.glb`）
-2. 编辑 `assets/models/procedural/models.json`，把对应项改为 `true`（也可以写成文件名，如 `"mug": "mug_v2.glb"`）
-3. 刷新页面（需通过 HTTP 服务打开）。浏览器控制台会打印 `[models] mug ← assets/models/procedural/mug.glb`
+1. 在 Blender 中 `文件 ▸ 导出 ▸ glTF 2.0`，格式选 **glTF Binary (.glb)**，以**同名**保存到 `assets/models/procedural/`（如 `pine.glb`）
+2. 编辑 `assets/models/procedural/models.json`，把对应项改为 `true`（也可以写成文件名，如 `"pine": "pine_v2.glb"`）
+3. 刷新页面（需通过 HTTP 服务打开）。浏览器控制台会打印 `[models] pine ← assets/models/procedural/pine.glb`
 
 注意事项：
 
 - **保持根对象在原点、不要移动整体位置**：摆放位置与朝向由页面决定，模型文件只描述模型本身
-- 劈柴桩：斧头对象名为 `Axe`（劈柴动画依赖）；若删掉则沿用程序化斧头
 - 导出时勾选 `Include ▸ Custom Properties`，可保留 `noCastShadow` 等阴影标记
 - 灯光强度单位与 Blender 不同，若导入整个场景后灯光过暗/过亮，可在导入选项的 `Lighting Mode` 中调整
 
@@ -254,7 +255,7 @@ Campfire/
 ├── tools/blender/       # Blender 资产构建脚本（bpy）
 ├── assets/
 │   ├── textures/
-│   ├── models/          # 正式 .glb 资产（帐篷、背包、折叠椅、提灯、水壶、火把、松果、木柴 …）
+│   ├── models/          # 正式 .glb 资产（全部营地道具 …）
 │   │   └── procedural/  # 程序化模型导出 + models.json（覆盖开关）
 │   └── source/          # 资产源文件 .blend
 ├── scripts/

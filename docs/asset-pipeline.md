@@ -25,7 +25,9 @@ Campfire/
 │   ├── torch.glb                 # Stage 5 ✔
 │   ├── pinecone.glb              # Stage 5 ✔
 │   ├── firewood.glb              # Stage 5 ✔（三个根节点 Log1Root / Log2Root / Log3Root）
-│   ├── props/                    # 后续：axe、stump、woodpile、mug …
+│   ├── chopping.glb              # Stage 5b ✔（ChopStumpRoot / AxeRoot / ChopLogRoot / ChopHalfRoot）
+│   ├── woodpile.glb              # Stage 5b ✔
+│   ├── mug.glb                   # Stage 5b ✔
 │   └── procedural/               # v1 的"程序模型导出"（供 Blender 参考/覆盖，不是正式资产）
 │       ├── models.json           # 覆盖开关
 │       └── *.glb
@@ -37,7 +39,10 @@ Campfire/
 │   ├── kettle/kettle.blend
 │   ├── torch/torch.blend
 │   ├── pinecone/pinecone.blend
-│   └── firewood/firewood.blend   # 每个目录另有 preview.png（Cycles 预览）；textures/ 为构建中间产物，已 gitignore
+│   ├── firewood/firewood.blend
+│   ├── chopping/chopping.blend
+│   ├── woodpile/woodpile.blend
+│   └── mug/mug.blend             # 每个目录另有 preview.png（Cycles 预览）；textures/ 为构建中间产物，已 gitignore
 └── tools/blender/                # 可复现的 Blender 构建脚本（bpy）
     ├── cf_common.py              # Stage 2 起的公共工具：软体造型、表面投影织带、UV0/UV1、烘焙旧化、glTF 导出
     ├── build_tent.py
@@ -47,7 +52,10 @@ Campfire/
     ├── build_kettle.py
     ├── build_torch.py
     ├── build_pinecone.py
-    └── build_firewood.py
+    ├── build_firewood.py
+    ├── build_chopping.py
+    ├── build_woodpile.py
+    └── build_mug.py
 ```
 
 规则：
@@ -102,8 +110,11 @@ tent.materials.canvas        // （可选）需要代码驱动的材质
 | `torch` | `TorchRoot`（原点=柄底，轴 +Y） | `FlameAnchor`、`Handle`、`Wrap`（材质 `TorchEmber`） | `GripAnchor` | `Wrap` 材质设 emissive 余烬贴图 |
 | `pinecone` | `PineconeRoot`（原点=中心） | — | — | 每个实例克隆材质（燃烧变色） |
 | `log-1/2/3` | `Log1Root`…`Log3Root`（原点=外端截面中心，轴 +Y；长 0.66/0.70/0.74 m） | `Bark`、`CharEnd`；材质 `Bark`、`Charcoal` | — | 共享材质：`Bark` 颜色随燃尽变黑、`Charcoal` 发光强度随火势；加柴时隐藏 `CharEnd` 并换用新鲜树皮材质 |
-| `axe` | `AxeRoot`（原点=斧头与柄交接处，柄 +Y，刃 +Z） | `BladeEdge` | `GripAnchor` | 若枢轴变化需重调 `CHOP_POSE` |
-| `stump` | `StumpRoot` | `TopAnchor`、`AxeSocket` | — | — |
+| `axe` | `AxeRoot`（原点=斧眼中心，柄 +Y，刃 +Z） | — | `BladeEdge`、`GripAnchor` | 劈柴关键帧绕此原点旋转；若枢轴变化需重调 `CHOP_POSE.raised/impact` |
+| `stump` | `ChopStumpRoot`（原点=地面中心） | `TopAnchor`（桩顶）、`AxeSocket`（斧头静置位姿） | — | 静置位姿与桩顶高度由场景读取 |
+| `chop-log` / `chop-half` | `ChopLogRoot`（底面中心，轴 +Y）/ `ChopHalfRoot`（轴线中点，壳在 +X、劈面朝 −X） | — | — | 半瓣模板克隆，几何与材质标记 shared |
+| `woodpile` | `WoodPileRoot`（地面中心，柴沿 X） | — | `Pile` | — |
+| `mug` | `MugRoot`（杯底中心，把手 +X） | — | `Mug`、`Coffee` | — |
 
 ---
 
@@ -271,6 +282,24 @@ const tent = await createTentInstance(assets); // 失败时抛错 → 回退程�
 - 松果：模板实例化一次，每次投掷同步克隆节点（共享几何，标记 `shared` 不被释放）并克隆材质，燃烧变色 / 余烬发光互不影响。
 - 全部保留程序化回退（`makeTorchModel()`、`pineconeGeo`、`makeLogGeometry()`）。
 
+## 7.6 Stage 5b 实测（劈柴桩 + 斧头 / 柴垛 / 搪瓷杯）
+
+| 项 | chopping.glb | woodpile.glb | mug.glb |
+|---|---|---|---|
+| 三角形 | Stump 1 628、Axe 708、ChopLog 52、ChopHalf 32 | 504（9 块劈柴） | 1 848（杯 1 812 + 咖啡 36） |
+| 材质 | 2：ChopWood（桩、斧柄、原木）、AxeSteel | 1：StackedWood | 2：Enamel、Coffee |
+| 贴图 | 颜色 + ORM（斧头金属）+ 树皮 / 年轮 / 木纹浮雕法线，1024 | 颜色 + ORM + 浮雕法线，1024 | 颜色 + ORM（掉瓷处露黑钢），512 |
+| 文件 | 0.67 MB | 0.52 MB | 0.16 MB |
+| 契约 | `ChopStumpRoot` / `TopAnchor`（0.342）/ `AxeSocket`；`AxeRoot`（斧眼）/ `BladeEdge` / `GripAnchor`；`ChopLogRoot`；`ChopHalfRoot` | `WoodPileRoot` / `Pile` | `MugRoot` / `Mug` / `Coffee` |
+| 构建 | `build_chopping.py` ≈2 min | `build_woodpile.py` ≈1.5 min | `build_mug.py` ≈30 s |
+
+接入与复查：
+- 斧头沿用 v1 的枢轴约定（原点 = 斧眼中心、柄 +Y、刃 +Z），`CHOP_POSE.raised / impact` 两个关键帧不用重调。
+- 静置位姿改由桩上的 `AxeSocket` 提供：斧刃约 2 cm 吃进桩面、偏离中心、柄向外上扬 30°。旧位姿把整个斧头横着埋进桩顶，且正好压在待劈原木的位置上。桩顶高度取 `TopAnchor`，抡起 / 劈中两帧随它整体平移。
+- 待劈原木与劈开后的半瓣也换成同一套木材（沿用 v1 的原点 / 轴向约定，下落、弹跳、躺平逻辑不变）；半瓣模板的几何与材质标记 `shared`，回收时不释放（`disposeObject3D` 现在也跳过共享材质）。
+- 柴垛：每块劈柴保留原木轴线作为物体 Z 轴，所以年轮以髓心为圆心、劈面木纹与树皮方向都与真实木材一致。
+- 营地道具已全部是正式资产：v1 的「程序模型覆盖」只剩远山 / 海岸 / 三种树，`overrideProp()` 已删除，`assets/models/procedural/` 中对应的 woodpile / stump / mug 覆盖文件已移除。
+
 ## 8. 分阶段计划
 
 每个阶段：Blender 制作 → 导出校验 → 接入（保留程序化回退）→ **与上一版本截图对比** → 再进入下一阶段。
@@ -282,7 +311,7 @@ const tent = await createTentInstance(assets); // 失败时抛错 → 回退程�
 | **3** ✔ | **Lantern** | 喷漆金属、黄铜、玻璃、局部光与火光叠加 |
 | **4** ✔ | **Kettle + Stand** | 与放置动画、受热自发光、蒸汽锚点结合 |
 | **5a** ✔ | **Torch / Pinecone / Logs**（火堆 8 根 + 加柴） | 互动锚点、实例化与材质克隆 |
-| 5b | Axe / Stump / WoodPile / Mug | 劈柴关键帧枢轴、柴垛 |
+| **5b** ✔ | **Axe / Stump / WoodPile / Mug**（+ 待劈原木 / 半瓣） | 劈柴关键帧枢轴、柴垛 |
 
 每阶段结束同步复查光照：月光、篝火点光、提灯局部光、阴影柔和度、色调映射与曝光、自发光强度、粗糙度响应、接触阴影。
 

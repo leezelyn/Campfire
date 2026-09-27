@@ -96,7 +96,6 @@ export const MODEL_REGISTRY = {
     root: 'KettleStandRoot', anchors: { rest: 'RestAnchor' }   // RestAnchor = 顶圈上沿（壶底落点）
   },
 
-  // —— 以下为后续阶段的契约（ready: false：尚无正式资产，场景继续使用程序化模型）——
   // Stage 5 —— 火把 / 松果 / 木柴（tools/blender/build_torch.py、build_pinecone.py、build_firewood.py）
   torch: {
     ready: true, stage: 5, url: 'assets/models/torch.glb',
@@ -127,13 +126,30 @@ export const MODEL_REGISTRY = {
     parts: { bark: 'Bark', charEnd: 'CharEnd' },
     materials: { bark: 'Bark', char: 'Charcoal' }
   }])),
-  axe: {
-    ready: false, stage: 5, url: 'assets/models/props/axe.glb',
-    root: 'AxeRoot', anchors: { blade: 'BladeEdge', grip: 'GripAnchor?' }
-  },
+  // Stage 5b —— 劈柴桩 + 斧头（build_chopping.py，同一 GLB 两个根节点）、柴垛、搪瓷杯
   stump: {
-    ready: false, stage: 5, url: 'assets/models/props/stump.glb',
-    root: 'StumpRoot', anchors: { top: 'TopAnchor', axeSocket: 'AxeSocket' }
+    ready: true, stage: 5, url: 'assets/models/chopping.glb',
+    root: 'ChopStumpRoot',                                    // 原点 = 地面中心
+    anchors: {
+      top: 'TopAnchor',                                       // 桩顶中心：待劈原木站立处（替代硬编码 0.342）
+      axeSocket: 'AxeSocket'                                  // 斧头静置位姿（替代 CHOP_POSE.idle）
+    }
+  },
+  axe: {
+    ready: true, stage: 5, url: 'assets/models/chopping.glb',
+    root: 'AxeRoot',                                          // 原点 = 斧眼中心：劈柴关键帧绕它旋转；柄 +Y、刃 +Z
+    anchors: { blade: 'BladeEdge?', grip: 'GripAnchor?' }
+  },
+  // 劈柴互动的待劈原木（原点 = 底面中心，轴 +Y，高 0.30）与劈开后的半瓣（原点 = 轴线中点，树皮壳在 +X 侧、劈面朝 −X）
+  'chop-log': { ready: true, stage: 5, url: 'assets/models/chopping.glb', root: 'ChopLogRoot' },
+  'chop-half': { ready: true, stage: 5, url: 'assets/models/chopping.glb', root: 'ChopHalfRoot' },
+  woodpile: {
+    ready: true, stage: 5, url: 'assets/models/woodpile.glb',
+    root: 'WoodPileRoot', parts: { pile: 'Pile?' }
+  },
+  mug: {
+    ready: true, stage: 5, url: 'assets/models/mug.glb',
+    root: 'MugRoot', parts: { mug: 'Mug?', coffee: 'Coffee?' }
   }
 };
 

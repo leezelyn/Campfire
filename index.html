@@ -438,7 +438,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { mergeVertices, mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
   AssetManager, createTentInstance, createLanternInstance, createKettleInstance, createKettleStandInstance,
-  createTorchInstance, createPineconeInstance, createLogInstance
+  createTorchInstance, createPineconeInstance, createLogInstance, createStumpInstance, createAxeInstance,
+  createChopLogInstance, createChopHalfInstance
 } from './src/assets/AssetManager.js';
 
 /* ============================================================
@@ -477,7 +478,8 @@ renderer.toneMappingExposure = 1.1;
 // 3D 资产管线（src/assets）：Blender 制作的正式模型在场景构建开始时就发起下载，
 // 与后面的程序化建模并行；用到时再 await（见帐篷摆放处）
 const assets = new AssetManager({ renderer });
-assets.preload(['tent', 'backpack', 'chair', 'lantern', 'kettle', 'kettle-stand', 'torch', 'pinecone', 'log-1', 'log-2', 'log-3']);
+assets.preload(['tent', 'backpack', 'chair', 'lantern', 'kettle', 'kettle-stand', 'torch', 'pinecone', 'log-1', 'log-2', 'log-3',
+  'stump', 'axe', 'chop-log', 'chop-half', 'woodpile', 'mug']);
 document.getElementById('app').appendChild(renderer.domElement);
 
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -3522,10 +3524,31 @@ fireGroup.add(fireFill);
     g.add(handle);
     return g;
   }
-  placeProp(makeWoodPile(), 2.95, 2.7, true, 'woodpile');   // 柴垛：帐篷旁的后侧
-  chopRig = makeStump();
+  // Stage 5b：劈柴桩 + 斧头（chopping.glb 两个根节点）、柴垛、搪瓷杯改用 Blender 资产，失败回退程序化模型。
+  // 斧头原点 = 斧眼中心（柄 +Y、刃 +Z），与劈柴关键帧的枢轴约定一致；静置位姿取桩上的 AxeSocket
+  async function makeChopRigAsset() {
+    const [st, ax] = await Promise.all([createStumpInstance(assets), createAxeInstance(assets)]);
+    const g = new THREE.Group();
+    g.name = 'ChopStump';
+    g.add(st.root, ax.root);
+    const sock = st.anchors.axeSocket;
+    const e = new THREE.Euler().setFromQuaternion(sock.quaternion, 'XYZ');
+    g.userData.axeRest = { p: sock.position.toArray(), r: [e.x, e.y, e.z] };
+    g.userData.top = st.anchors.top.position.y;
+    ax.root.position.copy(sock.position);
+    ax.root.rotation.copy(e);
+    g.userData.axe = ax.root;                 // 劈柴互动要抡它
+    return g;
+  }
+  placeProp(await assetOrFallback('woodpile', makeWoodPile), 2.95, 2.7, true, 'woodpile');   // 柴垛：帐篷旁的后侧
+  try {
+    chopRig = await makeChopRigAsset();
+  } catch (e) {
+    console.warn('[assets] chopping.glb unavailable, falling back to the procedural stump:', e.message || e);
+    chopRig = makeStump();
+  }
   placeProp(chopRig, -0.95, 2.45, true, 'stump');           // 劈柴桩：火把架外侧
-  placeProp(makeMug(), 0.34, 1.5, true, 'mug');             // 搪瓷杯：折叠椅脚边
+  placeProp(await assetOrFallback('mug', makeMug), 0.34, 1.5, true, 'mug');   // 搪瓷杯：折叠椅脚边
 }
 
 /* ============================================================
@@ -4200,7 +4223,7 @@ function disposeObject3D(root) {
     if (o.geometry && !o.geometry.userData.shared) o.geometry.dispose();   // 共享几何（如松果模板）不释放
     if (o.material) {
       const mats = Array.isArray(o.material) ? o.material : [o.material];
-      for (const m of mats) m.dispose();
+      for (const m of mats) if (!m.userData.shared) m.dispose();         // 共享材质（GLB 模板）不释放
     }
   });
   root.removeFromParent();
@@ -4949,11 +4972,28 @@ const CHOP_POSE = {
   raised: { p: [0.02, 0.85, -0.30],  r: [-1.6, 0.1, 0] },       // 向后抡起过肩
   impact: { p: [0.0, 0.70, -0.02],   r: [1.3, 0, 0] }           // 劈中原木顶部
 };
+// GLB 劈柴桩：静置位姿取契约 AxeSocket（斧刃约 2 cm 吃进桩顶、偏离中心，不与待劈原木重叠），
+// 桩顶高度取 TopAnchor；抡起 / 劈中两帧随桩顶高度整体平移
+const STUMP_TOP = chopRig?.userData.top ?? 0.342;
+if (chopRig?.userData.axeRest) CHOP_POSE.idle = chopRig.userData.axeRest;
+for (const k of ['raised', 'impact']) CHOP_POSE[k].p[1] += STUMP_TOP - 0.342;
 const chopBarkMat = new THREE.MeshStandardMaterial({ color: 0x4d331a, roughness: 0.95 });
 const chopCutMat = new THREE.MeshStandardMaterial({ color: 0xc8a468, roughness: 0.9 });
 // 待劈原木：立在桩顶（局部 y 0.342 起，高 0.30）
 const chopLog = new THREE.Group();
-{
+let chopHalfTemplate = null;   // GLB 半瓣模板：劈开时同步克隆（几何 / 材质共享，回收时不释放）
+try {
+  // Stage 5b：待劈原木与半瓣也来自 chopping.glb（沿用 v1 程序模型的原点 / 轴向约定）
+  const [lg, hf] = await Promise.all([createChopLogInstance(assets), createChopHalfInstance(assets)]);
+  chopLog.add(lg.root);
+  chopHalfTemplate = hf.root;
+  chopHalfTemplate.traverse(o => {
+    if (!o.isMesh) return;
+    o.geometry.userData.shared = true;
+    o.material.userData.shared = true;
+  });
+} catch (e) {
+  console.warn('[assets] chop log / half unavailable, falling back to procedural pieces:', e.message || e);
   const body = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.058, 0.30, 12), chopBarkMat);
   body.position.y = 0.15;
   body.castShadow = true;
@@ -4961,8 +5001,8 @@ const chopLog = new THREE.Group();
   cap.rotation.x = -Math.PI / 2;
   cap.position.y = 0.302;
   chopLog.add(body, cap);
-  chopLog.visible = false;
 }
+chopLog.visible = false;
 // 共享几何（标记 shared，回收碎块时不释放）：半瓣柴 = 半圆柱壳 + 浅色劈面
 const chopHalfGeo = new THREE.CylinderGeometry(0.055, 0.055, 0.30, 10, 1, false, 0, Math.PI);
 const chopFaceGeo = new THREE.PlaneGeometry(0.11, 0.30);
@@ -4971,6 +5011,7 @@ for (const g of [chopHalfGeo, chopFaceGeo, chopChipGeo]) g.userData.shared = tru
 const chopDebris = [];
 
 function makeChopHalf() {
+  if (chopHalfTemplate) return chopHalfTemplate.clone(true);
   const g = new THREE.Group();
   const shell = new THREE.Mesh(chopHalfGeo, chopBarkMat);
   shell.castShadow = true;
@@ -5072,7 +5113,7 @@ function updateChop(dt, t) {
   a.time += dt;
   if (a.state === 'place') {                                   // 原木落上桩顶
     const k = Math.min(1, a.time / 0.25);
-    chopLog.position.y = 0.342 + (1 - k) * 0.18;
+    chopLog.position.y = STUMP_TOP + (1 - k) * 0.18;
     if (k >= 1) { a.state = 'raise'; a.time = 0; }
   } else if (a.state === 'raise') {                            // 抡斧过肩
     const k = THREE.MathUtils.smoothstep(Math.min(1, a.time / 0.5), 0, 1);
@@ -6440,11 +6481,8 @@ const EXPORT_TARGETS = [
   'tent', 'chair', 'backpack', 'lantern', 'woodpile', 'stump', 'mug', 'firepit'
 ];
 // 可被 Blender 模型覆盖的目标（其余只导出：地形被树木/散布物的落地计算依赖，火堆柴有坍塌动画）
-// 帐篷、折叠椅、登山包、提灯已升级为正式 GLB 资产（ModelRegistry），不再走覆盖流程
-const OVERRIDABLE = new Set([
-  'mountains', 'coast', 'spruce', 'pine', 'palm',
-  'woodpile', 'stump', 'mug'
-]);
+// 营地道具已全部升级为正式 GLB 资产（ModelRegistry），不再走覆盖流程；只剩远山 / 海岸 / 三种树
+const OVERRIDABLE = new Set(['mountains', 'coast', 'spruce', 'pine', 'palm']);
 
 // 导出源：mode = 'scene' 整个场景 / 'world' 保留世界坐标 / 'local' 以自身原点导出（去掉摆放位移与朝向，保留缩放）
 function exportSource(key) {
@@ -6759,30 +6797,9 @@ function overrideDistant(group, loaded) {
   loaded.traverse(o => { if (o.isMesh) { o.castShadow = o.receiveShadow = false; applyDistantFog(o.material); } });
   group.add(loaded);
 }
-function overrideProp(key, loaded) {
-  const group = PROP_GROUPS[key];
-  if (!group) return;
-  const oldAxe = key === 'stump' ? group.userData.axe : null;
-  // 保留运行时挂在道具下的对象（劈柴的原木与碎屑）
-  const keep = new Set([chopLog, ...chopDebris.map(d => d.mesh)]);
-  for (const c of [...group.children]) {
-    if (keep.has(c)) continue;
-    group.remove(c);
-    if (c !== oldAxe) disposeReplaced(c);
-  }
-  group.scale.set(1, 1, 1);                    // 导出时根节点已带上原缩放
-  group.add(loaded);
-  if (key === 'stump') {
-    const axe = loaded.getObjectByName('Axe');
-    if (axe) group.userData.axe = axe;
-    else if (oldAxe) group.add(oldAxe);       // 模型里没有斧头：保留程序化斧头，劈柴动画照常
-  }
-  applyPropShadows(group);   // GLTFLoader 把 glTF extras 放进 userData：noCastShadow 等标记随 Blender 往返保留
-}
 function applyModelOverride(key, loaded) {
   if (key === 'spruce' || key === 'pine' || key === 'palm') overrideTree(key, loaded);
   else if (key === 'mountains' || key === 'coast') overrideDistant(key === 'mountains' ? mountains : coastHills, loaded);
-  else overrideProp(key, loaded);
 }
 async function loadModelOverrides() {
   let cfg;
