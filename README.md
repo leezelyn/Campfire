@@ -174,7 +174,7 @@ Real-world camp props are being upgraded from "procedurally assembled Three.js p
 | Stage 1 | Tent | ✔ `assets/models/tent.glb` (canvas weave, seams, tension folds, door roll, guy lines, lived-in interior; ~26k triangles, 1.3 MB) |
 | Stage 2 | Backpack, chair | ✔ `backpack.glb` (soft-packed body, surface-hugging compression straps, buckles, bungee, foam mat, stitching; ~15k tris, 1.4 MB) · `chair.glb` (X-frame camp chair, sagging slings, sleeves, drink holder; ~6k tris, 0.7 MB) |
 | Stage 3 | Lantern | ✔ `lantern.glb` (hurricane lantern: stamped fount, side air tubes, chimney hood, brass burner and wick knob, glass globe in a wire guard, bail; chipped enamel with bare-steel flakes and soot; ~11k tris, 0.7 MB) |
-| Stage 4 | Kettle + stand | planned |
+| Stage 4 | Kettle + stand | ✔ `kettle.glb` (12 L cast-iron kettle: foot ring, casting flange, rolled neck, lid and knob, tapered spout, lugs, forged bail with a wooden grip; sooted bottom, worn edges, oxide · forged four-leg pot stand with a brace hoop, legs set between the logs; ~8.5k tris, 0.7 MB) |
 | Stage 5 | Torch, pinecone, logs, axe, stump… | planned |
 
 Rebuild the assets (Blender 4.x, or `pip install bpy`):
@@ -184,6 +184,7 @@ blender --background --python tools/blender/build_tent.py      # writes assets/m
 blender --background --python tools/blender/build_backpack.py  # backpack.glb + assets/source/backpack/backpack.blend
 blender --background --python tools/blender/build_chair.py     # chair.glb + assets/source/chair/chair.blend
 blender --background --python tools/blender/build_lantern.py   # lantern.glb + assets/source/lantern/lantern.blend
+blender --background --python tools/blender/build_kettle.py    # kettle.glb (kettle + stand) + assets/source/kettle/kettle.blend
 ```
 
 You can also open `assets/source/<name>/<name>.blend`, edit it and export over `assets/models/<name>.glb` with the settings in `docs/asset-pipeline.md` §6.
@@ -249,7 +250,7 @@ Campfire/
 ├── tools/blender/       # Blender asset build scripts (bpy)
 ├── assets/
 │   ├── textures/
-│   ├── models/          # production .glb assets (tent, backpack, chair, lantern …)
+│   ├── models/          # production .glb assets (tent, backpack, chair, lantern, kettle …)
 │   │   └── procedural/  # procedural-model exports + models.json (override switches)
 │   └── source/          # asset source files (.blend)
 ├── scripts/

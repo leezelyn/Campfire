@@ -111,4 +111,5 @@ export const createBackpackInstance = assets => assets.create('backpack');
 export const createChairInstance = assets => assets.create('chair');
 export const createLanternInstance = assets => assets.create('lantern');
 export const createKettleInstance = assets => assets.create('kettle');
+export const createKettleStandInstance = assets => assets.create('kettle-stand');
 export const createTorchInstance = assets => assets.create('torch');

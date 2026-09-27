@@ -436,7 +436,9 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { mergeVertices, mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { AssetManager, createTentInstance, createLanternInstance } from './src/assets/AssetManager.js';
+import {
+  AssetManager, createTentInstance, createLanternInstance, createKettleInstance, createKettleStandInstance
+} from './src/assets/AssetManager.js';
 
 /* ============================================================
    基础场景
@@ -474,7 +476,7 @@ renderer.toneMappingExposure = 1.1;
 // 3D 资产管线（src/assets）：Blender 制作的正式模型在场景构建开始时就发起下载，
 // 与后面的程序化建模并行；用到时再 await（见帐篷摆放处）
 const assets = new AssetManager({ renderer });
-assets.preload(['tent', 'backpack', 'chair', 'lantern']);
+assets.preload(['tent', 'backpack', 'chair', 'lantern', 'kettle', 'kettle-stand']);
 document.getElementById('app').appendChild(renderer.domElement);
 
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -4245,18 +4247,24 @@ function updateMarshmallow(dt, t) {
   marshmallow.rotation.y = t * 1.65;
 }
 
-// 2) 水壶：移植自 KettleCampfireSculptor 的旧铁壶——车削壶身/壶肩/圈足/领口/壶盖，
-//    弧管壶嘴、提梁与炭黑握把、壶底烟熏带；铸铁 PBR 材质（albedo/roughness/normal/AO）
+// 2) 水壶 + 支架。Stage 4 起为 Blender 资产（tools/blender/build_kettle.py → kettle.glb，两个根节点）：
+//    kettle 组是动画目标（原点 = 壶底中心），GLB 模型与蒸汽粒子都挂在它下面；
+//    蒸汽发射点取契约锚点 SteamAnchor，壶底落点取支架的 RestAnchor；GLB 不可用时回退下面的程序化模型
 const kettle = new THREE.Group();
-const ironTex = loadPbrTextures('iron', 1.35);
-const kettleMat = new THREE.MeshStandardMaterial({
-  map: ironTex.map, roughnessMap: ironTex.roughnessMap,
-  normalMap: ironTex.normalMap, aoMap: ironTex.aoMap,
-  normalScale: new THREE.Vector2(0.2, 0.2), aoMapIntensity: 0.62,
-  metalness: 0.72, roughness: 0.72,
-  emissive: 0x4a1804, emissiveIntensity: 0
-});
-{
+kettle.name = 'Kettle';
+let kettleMat;                                          // 受热自发光材质（逐实例一份）
+const steamOrigin = new THREE.Vector3(0.38, 0.31, 0);   // 蒸汽发射点（kettle 局部）
+// 程序化回退：移植自 KettleCampfireSculptor 的旧铁壶——车削壶身/壶肩/圈足/领口/壶盖，
+// 弧管壶嘴、提梁与炭黑握把、壶底烟熏带；铸铁 PBR 材质（albedo/roughness/normal/AO）
+function makeProceduralKettle() {
+  const ironTex = loadPbrTextures('iron', 1.35);
+  const kettleMat = new THREE.MeshStandardMaterial({
+    map: ironTex.map, roughnessMap: ironTex.roughnessMap,
+    normalMap: ironTex.normalMap, aoMap: ironTex.aoMap,
+    normalScale: new THREE.Vector2(0.2, 0.2), aoMapIntensity: 0.62,
+    metalness: 0.72, roughness: 0.72,
+    emissive: 0x4a1804, emissiveIntensity: 0
+  });
   const S = 0.14;                                       // 原模型 → 营地尺度
   const gripMat = new THREE.MeshStandardMaterial({ color: 0x141008, roughness: 0.95 });
   const sootMat = new THREE.MeshStandardMaterial({
@@ -4321,11 +4329,22 @@ const kettleMat = new THREE.MeshStandardMaterial({
   inner.position.y = 0.6 * S;                           // 壶底落到组原点
   inner.rotation.y = Math.PI;                           // 壶嘴朝 +X（蒸汽从这边冒出）
   kettle.add(inner);
+  return kettleMat;
+}
+try {
+  const m = await createKettleInstance(assets);
+  kettle.add(m.root);
+  kettleMat = m.materials.body;
+  kettle.updateMatrixWorld(true);                       // kettle 仍在原点：锚点世界坐标 = kettle 局部
+  steamOrigin.setFromMatrixPosition(m.anchors.steam.matrixWorld);
+} catch (e) {
+  console.warn('[assets] kettle.glb unavailable, falling back to the procedural kettle:', e.message || e);
+  kettleMat = makeProceduralKettle();
 }
 const steamPuffs = [];
 for (let i = 0; i < 7; i++) {
   const puff = new THREE.Mesh(
-    new THREE.SphereGeometry(0.065, 8, 6),
+    new THREE.SphereGeometry(0.065, 16, 12),   // 8×6 段在近景下能看出棱面
     new THREE.MeshBasicMaterial({ color: 0xd9e1e7, transparent: true, opacity: 0, depthWrite: false })
   );
   kettle.add(puff);
@@ -4335,18 +4354,30 @@ kettle.visible = false;
 scene.add(kettle);
 const KETTLE_REST = new THREE.Vector3(0.04, 0.59, 0.02);   // 壶底平面搭在支架顶圈上（圈顶 ≈ 0.588）
 const kettleRig = new THREE.Group();
-const standMat = new THREE.MeshStandardMaterial({ color: 0x17191d, metalness: 0.5, roughness: 0.55 });
-const standCx = 0.04, standCz = 0.02, ringY = 0.575, ringR = 0.19;
-// 顶圈：托住壶底
-const topRing = new THREE.Mesh(new THREE.TorusGeometry(ringR, 0.013, 8, 30), standMat);
-topRing.rotation.x = Math.PI / 2; topRing.position.set(standCx, ringY, standCz);
-topRing.castShadow = true;
-kettleRig.add(topRing);
-// 4 条外撇细腿：顶圈 → 地面（落在石圈内侧）
-for (const ang of [Math.PI * 0.25, Math.PI * 0.75, Math.PI * 1.25, Math.PI * 1.75]) {
-  const top = new THREE.Vector3(standCx + Math.cos(ang) * ringR, ringY, standCz + Math.sin(ang) * ringR);
-  const foot = new THREE.Vector3(standCx + Math.cos(ang) * 0.8, 0.02, standCz + Math.sin(ang) * 0.8);
-  kettleRig.add(makeBeamBetween(top, foot, 0.015, standMat, 6));
+kettleRig.name = 'KettleStand';
+const standCx = 0.04, standCz = 0.02;
+try {
+  // 锻铁支架（GLB）：四腿位于 22.5° + k·90°，避开 k·45° 的 8 根 teepee 木柴
+  const st = await createKettleStandInstance(assets);
+  st.root.position.set(standCx, 0, standCz);
+  kettleRig.add(st.root);
+  kettleRig.updateMatrixWorld(true);
+  st.anchors.rest.getWorldPosition(KETTLE_REST);
+} catch (e) {
+  console.warn('[assets] kettle stand unavailable, falling back to the procedural stand:', e.message || e);
+  const standMat = new THREE.MeshStandardMaterial({ color: 0x17191d, metalness: 0.5, roughness: 0.55 });
+  const ringY = 0.575, ringR = 0.19;
+  // 顶圈：托住壶底
+  const topRing = new THREE.Mesh(new THREE.TorusGeometry(ringR, 0.013, 8, 30), standMat);
+  topRing.rotation.x = Math.PI / 2; topRing.position.set(standCx, ringY, standCz);
+  topRing.castShadow = true;
+  kettleRig.add(topRing);
+  // 4 条外撇细腿：顶圈 → 地面（落在石圈内侧）
+  for (const ang of [Math.PI * 0.25, Math.PI * 0.75, Math.PI * 1.25, Math.PI * 1.75]) {
+    const top = new THREE.Vector3(standCx + Math.cos(ang) * ringR, ringY, standCz + Math.sin(ang) * ringR);
+    const foot = new THREE.Vector3(standCx + Math.cos(ang) * 0.8, 0.02, standCz + Math.sin(ang) * 0.8);
+    kettleRig.add(makeBeamBetween(top, foot, 0.015, standMat, 6));
+  }
 }
 kettleRig.visible = false;
 scene.add(kettleRig);
@@ -4372,9 +4403,9 @@ function updateSteam(t, strength) {
     const puff = steamPuffs[i];
     const phase = (t * (0.34 + i * 0.015) + i / steamPuffs.length) % 1;
     puff.position.set(
-      0.38 + Math.sin(t * 1.5 + i * 2.1) * 0.06 * phase,   // 新壶嘴口约在 (0.38, 0.31)
-      0.31 + phase * 0.82,
-      Math.cos(t * 1.2 + i) * 0.05 * phase
+      steamOrigin.x + Math.sin(t * 1.5 + i * 2.1) * 0.06 * phase,   // 壶嘴口（SteamAnchor）
+      steamOrigin.y + phase * 0.82,
+      steamOrigin.z + Math.cos(t * 1.2 + i) * 0.05 * phase
     );
     puff.scale.setScalar(0.55 + phase * 1.8);
     puff.material.opacity = Math.sin(Math.PI * phase) * 0.24 * strength;

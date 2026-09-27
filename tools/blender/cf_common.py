@@ -1,11 +1,11 @@
 """
 Campfire · shared Blender (bpy) helpers for asset build scripts.
 
-Used by build_backpack.py / build_chair.py / build_lantern.py (and later stages). Conventions (docs/asset-pipeline.md):
+Used by build_backpack.py / build_chair.py / build_lantern.py / build_kettle.py (and later stages). Conventions (docs/asset-pipeline.md):
 Blender Z-up, 1 unit = 1 m, the front of a prop faces Blender −Y (= glTF +Z), origin = ground contact.
 
 Main pieces
-    mesh / curve builders     mesh_object, curve_tube, lathe, catmull, superellipsoid, strip, surface_strip, dashes
+    mesh / curve builders     mesh_object, curve_tube, lathe, sweep, catmull, superellipsoid, strip, surface_strip, dashes
     surface queries           Surface (BVH over several objects: nearest point, ray hits)
     hardware                  rounded_box placed on a surface frame (buckles, sliders, caps)
     UV + bake                 unwrap_uv1 (+ uniform-texel UV0), weave_normal, bake_weathering
@@ -167,6 +167,37 @@ def catmull(pts, per_seg=6):
                                     + (-p0 + 3 * p1 - 3 * p2 + p3) * t3)))
     out.append(tuple(P[-2]))
     return out
+
+
+def sweep(name, pts, radii, sides=12, parent=None, cap_start=True, cap_end=False, smooth=True):
+    """Tapered tube along a polyline (spouts, horns): one ring per point with its own radius,
+    parallel-transported frames (no twist). Open ends unless capped."""
+    P = [Vector(p) for p in pts]
+    n = len(P)
+    tangents = []
+    for i in range(n):
+        t = (P[min(i + 1, n - 1)] - P[max(i - 1, 0)]).normalized()
+        tangents.append(t)
+    ref = Vector((0, 0, 1)) if abs(tangents[0].z) < 0.9 else Vector((1, 0, 0))
+    u = (ref - tangents[0] * ref.dot(tangents[0])).normalized()
+    verts, faces = [], []
+    for i in range(n):
+        if i:
+            # parallel transport of u from the previous tangent to this one
+            u = (u - tangents[i] * u.dot(tangents[i])).normalized()
+        v = tangents[i].cross(u)
+        for k in range(sides):
+            a = 2 * math.pi * k / sides
+            verts.append(tuple(P[i] + (u * math.cos(a) + v * math.sin(a)) * radii[i]))
+    for i in range(n - 1):
+        for k in range(sides):
+            a, b = i * sides + k, i * sides + (k + 1) % sides
+            faces.append((a, b, b + sides, a + sides))
+    if cap_start:
+        faces.append(tuple(reversed(range(sides))))
+    if cap_end:
+        faces.append(tuple((n - 1) * sides + k for k in range(sides)))
+    return mesh_object(name, verts, faces, parent=parent, smooth=smooth)
 
 
 def lathe(name, profile, segments=32, parent=None, smooth=True, loc=(0, 0, 0)):
@@ -494,7 +525,8 @@ def unwrap_uv1(objs, uv0_tile, margin=0.004):
 # ------------------------------------------------------------------ weathering bake
 def bake_weathering(objs, name, out_dir, size=1024, dirt_height=0.12, fade=0.4, edge_wear=0.35,
                     stains=0.0, soot_front=0.0, ao_distance=0.2, seed=0.0,
-                    chips=0.0, chip_color='#6c6a64', soot_top=None, metal=False):
+                    chips=0.0, chip_color='#6c6a64', soot_top=None, metal=False,
+                    soot_bottom=None, rust=0.0):
     """Bake a weathered base colour and ORM (AO / roughness / metal) into UV1 for `objs`.
 
     Each object supplies its own look through custom properties:
@@ -504,7 +536,9 @@ def bake_weathering(objs, name, out_dir, size=1024, dirt_height=0.12, fade=0.4, 
         edge wear on convex edges (pointiness) · optional stains / soot · AO crease grime
     Painted metal (metal=True): per-object `cf_metal`; `chips` > 0 flakes paint off convex edges and in
     scattered spots, exposing bare metal (`chip_color`, metallic 1) ringed with rust;
-    `soot_top` = (z0, z1, amount) blackens surfaces above z0 (lamp chimneys, pot rims).
+    `soot_top` = (z0, z1, amount) blackens surfaces above z0 (lamp chimneys, pot rims);
+    `soot_bottom` = (z0, z1, amount) blackens surfaces below z1 (pots over a fire, z0 = full soot);
+    `rust` > 0 adds orange-brown oxide patches (matte, non-metallic).
     """
     sc = bpy.context.scene
     sc.render.engine = 'CYCLES'
@@ -608,6 +642,15 @@ def bake_weathering(objs, name, out_dir, size=1024, dirt_height=0.12, fade=0.4, 
         z0, z1, amt = soot_top
         soot = op('MULTIPLY', mr(sp.outputs['Z'], z0, z1), op('MULTIPLY', mr(noise(6.0, 3.0), 0.25, 0.7, 0.55, 1.0), amt))
         col = mix(col, srgb('#15130f'), soot)
+    if soot_bottom is not None:
+        z0, z1, amt = soot_bottom
+        sb = op('MULTIPLY', mr(sp.outputs['Z'], z1, z0), op('MULTIPLY', mr(noise(5.0, 4.0), 0.3, 0.65, 0.6, 1.0), amt))
+        col = mix(col, srgb('#0d0c0b'), sb)
+        soot = sb if soot is None else op('MAXIMUM', soot, sb)
+    rusty = None
+    if rust > 0:
+        rusty = op('MULTIPLY', mr(op('ADD', noise(9.0, 5.0, 0.6), op('MULTIPLY', noise(40.0, 6.0), 0.25)), 0.66, 0.78), rust)
+        col = mix(col, srgb('#5b3620'), rusty)
     chip = None
     if chips > 0:
         # one field drives chips (bare metal) and the rust ring around them
@@ -633,6 +676,8 @@ def bake_weathering(objs, name, out_dir, size=1024, dirt_height=0.12, fade=0.4, 
     rough = op('ADD', rough, op('MULTIPLY', wear, 0.06))
     if soot is not None:
         rough = op('ADD', rough, op('MULTIPLY', soot, 0.35))
+    if rusty is not None:
+        rough = op('ADD', rough, op('MULTIPLY', rusty, 0.25))
     if chip is not None:
         rough = op('ADD', op('MULTIPLY', rough, op('SUBTRACT', 1.0, chip)), op('MULTIPLY', chip, 0.48))
     r3 = N('ShaderNodeCombineColor')
@@ -643,6 +688,9 @@ def bake_weathering(objs, name, out_dir, size=1024, dirt_height=0.12, fade=0.4, 
         attr_m = N('ShaderNodeAttribute')
         attr_m.attribute_type, attr_m.attribute_name = 'OBJECT', 'cf_metal'
         met = attr_m.outputs['Fac']
+        for dull in (soot, rusty):          # soot and oxide are not metallic
+            if dull is not None:
+                met = op('MULTIPLY', met, op('SUBTRACT', 1.0, op('MINIMUM', dull, 1.0)))
         if chip is not None:
             met = op('MAXIMUM', met, chip)
         m3 = N('ShaderNodeCombineColor')

@@ -177,7 +177,7 @@ http://localhost:8341
 | Stage 1 | テント | ✔ `assets/models/tent.glb`（帆布の織り目、縫い目、張力のしわ、巻き上げた入口、張り綱、生活感のある室内；約 2.6 万三角形、1.3 MB） |
 | Stage 2 | バックパック、椅子 | ✔ `backpack.glb`（荷物の詰まった柔らかな本体、面に沿うコンプレッションストラップ、バックル、バンジーコード、マット、縫い目；約 1.5 万三角形、1.4 MB）· `chair.glb`（X フレームのキャンプチェア、たわんだ座面／背布、スリーブ、ドリンクホルダー；約 6 千三角形、0.7 MB） |
 | Stage 3 | ランタン | ✔ `lantern.glb`（ハリケーンランタン：プレス成形のタンク、左右の給気管、フード、真鍮バーナーと芯ノブ、ワイヤーガード内のガラスホヤ、ハンドル；ホーロー塗装の剥げと煤；約 1.1 万三角形、0.7 MB） |
-| Stage 4 | ケトル + スタンド | 予定 |
+| Stage 4 | ケトル + スタンド | ✔ `kettle.glb`（12 L 鋳鉄ケトル：高台、鋳造フランジ、巻き口、蓋とつまみ、先細りの注ぎ口、吊り耳、木製グリップ付き鍛鉄ハンドル；底の煤、角の擦れ、錆 · 補強リング付きの鍛鉄 4 脚スタンド、脚は薪の間；約 8.5 千三角形、0.7 MB） |
 | Stage 5 | 松明、松ぼっくり、薪、斧、薪割り台など | 予定 |
 
 アセットの再生成（Blender 4.x、または `pip install bpy`）：
@@ -187,6 +187,7 @@ blender --background --python tools/blender/build_tent.py      # assets/models/t
 blender --background --python tools/blender/build_backpack.py  # backpack.glb + assets/source/backpack/backpack.blend
 blender --background --python tools/blender/build_chair.py     # chair.glb + assets/source/chair/chair.blend
 blender --background --python tools/blender/build_lantern.py   # lantern.glb + assets/source/lantern/lantern.blend
+blender --background --python tools/blender/build_kettle.py    # kettle.glb (kettle + stand) + assets/source/kettle/kettle.blend
 ```
 
 `assets/source/<名前>/<名前>.blend` を直接編集し、`docs/asset-pipeline.md` §6 の設定で `assets/models/<名前>.glb` に書き出すこともできます。
@@ -252,7 +253,7 @@ Campfire/
 ├── tools/blender/       # Blender アセットビルドスクリプト（bpy）
 ├── assets/
 │   ├── textures/
-│   ├── models/          # 正式 .glb アセット（テント、バックパック、椅子、ランタン …）
+│   ├── models/          # 正式 .glb アセット（テント、バックパック、椅子、ランタン、ケトル …）
 │   │   └── procedural/  # 手続きモデルの書き出し + models.json（置き換え設定）
 │   └── source/          # アセットのソースファイル（.blend）
 ├── scripts/

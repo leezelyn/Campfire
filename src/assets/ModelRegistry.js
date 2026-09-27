@@ -77,19 +77,26 @@ export const MODEL_REGISTRY = {
     }
   },
 
-  // —— 以下为后续阶段的契约（ready: false：尚无正式资产，场景继续使用程序化模型）——
+  // Stage 4 —— 铸铁水壶 + 锻铁支架（tools/blender/build_kettle.py，同一个 GLB 的两个根节点）
   kettle: {
-    ready: false, stage: 4, url: 'assets/models/kettle.glb',
-    root: 'KettleRoot',
+    ready: true, stage: 4, url: 'assets/models/kettle.glb',
+    root: 'KettleRoot',                         // 原点 = 壶底圈足中心，壶嘴朝 +X
     anchors: { steam: 'SteamAnchor' },          // 替代硬编码的蒸汽口 (0.38, 0.31, 0)
-    parts: { body: 'Body', handle: 'Handle', lid: 'Lid?' },
+    parts: { body: 'Body', handle: 'Handle', lid: 'Lid?', spout: 'Spout?' },
     materials: { body: 'KettleIron' },
-    perInstanceMaterials: ['body']              // 受热自发光逐实例驱动
+    perInstanceMaterials: ['body'],             // 受热自发光逐实例驱动
+    prepare(model) {
+      // 受热发光色（暗橙红）；强度由「煮水」进度驱动，初始为 0
+      model.materials.body.emissive.setHex(0x4a1804);
+      model.materials.body.emissiveIntensity = 0;
+    }
   },
   'kettle-stand': {
-    ready: false, stage: 4, url: 'assets/models/kettle.glb',
-    root: 'KettleStandRoot', anchors: { rest: 'RestAnchor' }
+    ready: true, stage: 4, url: 'assets/models/kettle.glb',
+    root: 'KettleStandRoot', anchors: { rest: 'RestAnchor' }   // RestAnchor = 顶圈上沿（壶底落点）
   },
+
+  // —— 以下为后续阶段的契约（ready: false：尚无正式资产，场景继续使用程序化模型）——
   torch: {
     ready: false, stage: 5, url: 'assets/models/torch.glb',
     root: 'TorchRoot',

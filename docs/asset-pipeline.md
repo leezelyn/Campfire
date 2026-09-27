@@ -21,7 +21,7 @@ Campfire/
 │   ├── backpack.glb              # Stage 2 ✔
 │   ├── chair.glb                 # Stage 2 ✔
 │   ├── lantern.glb               # Stage 3 ✔
-│   ├── kettle.glb                # Stage 4（含 kettle-stand）
+│   ├── kettle.glb                # Stage 4 ✔（两个根节点：KettleRoot + KettleStandRoot）
 │   ├── torch.glb                 # Stage 5
 │   ├── pinecone.glb              # Stage 5
 │   ├── props/                    # Stage 5：logs、axe、stump、woodpile、mug …
@@ -32,13 +32,15 @@ Campfire/
 │   ├── tent/tent.blend
 │   ├── backpack/backpack.blend
 │   ├── chair/chair.blend
-│   └── lantern/lantern.blend     # 每个目录另有 preview.png（Cycles 预览）；textures/ 为构建中间产物，已 gitignore
+│   ├── lantern/lantern.blend
+│   └── kettle/kettle.blend       # 每个目录另有 preview.png（Cycles 预览）；textures/ 为构建中间产物，已 gitignore
 └── tools/blender/                # 可复现的 Blender 构建脚本（bpy）
     ├── cf_common.py              # Stage 2 起的公共工具：软体造型、表面投影织带、UV0/UV1、烘焙旧化、glTF 导出
     ├── build_tent.py
     ├── build_backpack.py
     ├── build_chair.py
-    └── build_lantern.py
+    ├── build_lantern.py
+    └── build_kettle.py
 ```
 
 规则：
@@ -59,7 +61,7 @@ Campfire/
 | 变换 | 根对象 **Scale = 1、Rotation = 0**，导出前 Apply All Transforms |
 | 禁止 | 在 Three.js 里用 `scale.set(0.013…)`、`rotation.set(…)` 补救导出错误 |
 
-v1 遗留的违例（替换时一并消除）：~~提灯组 `scale 0.58`~~（Stage 3 已消除，仅程序化回退仍用）、水壶 `scale 0.14 + rotation.y π`。
+v1 遗留的违例（替换时一并消除）：~~提灯组 `scale 0.58`~~（Stage 3 已消除，仅程序化回退仍用）、~~水壶 `scale 0.14 + rotation.y π`~~（Stage 4 已消除）。
 
 ---
 
@@ -217,6 +219,28 @@ const tent = await createTentInstance(assets); // 失败时抛错 → 回退程�
 - **地面光斑**：火苗高度从 ≈0.22 m 降到 0.155 m，相同距离地面照度约 ×1.2，`LANTERN_INT` 3.2 → 2.8。
 - 漆面粗糙度 0.62、钢丝 0.6、黄铜 0.45：避免火苗在侧管上形成白色高光条。
 
+## 7.4 Stage 4 实测（kettle.glb：水壶 + 支架）
+
+| 项 | 数值 |
+|---|---|
+| 三角形 | 8 524（预算 10 k）：壶 4 632（Body 2 016、Spout 1 172、Handle 724、Lid 720）、支架 3 892 |
+| 材质 | 3：KettleIron（壶，逐实例克隆 → 受热自发光）、StandIron（支架，与壶共用同一张烘焙图集）、KettleGrip（木握把） |
+| 贴图 | baseColor + ORM 1024 JPEG（UV1，两者共用）：养护过的黑铸铁、边缘与提梁磨亮露金属、锈斑、**壶底烟熏**（新增 `soot_bottom`）、支架顶圈烟熏 |
+| 文件 | 0.68 MB（.blend 0.64 MB） |
+| 校验 | gltf-validator 0 error / 0 warning |
+| 尺寸 | 壶 Ø 0.36 m（12 L 吊壶），盖钮顶 0.29 m，提梁 0.42 m；支架顶圈 r 0.127 m、上沿 0.588 m，脚落在 r 0.80 m |
+| 契约 | `KettleRoot`（原点 = 圈足中心，壶嘴 +X）/ `SteamAnchor` / `Body` / `Handle` / `Lid` / `Spout` / 材质 `KettleIron`；`KettleStandRoot` / `RestAnchor`（顶圈上沿） |
+| 构建 | `tools/blender/build_kettle.py`，约 1 min；.blend 里壶直接坐在支架上，便于整体微调 |
+
+接入与复查：
+- 去掉旧模型的 `scale 0.14 + rotation.y π`；`kettle` 组仍是动画目标（放置 / 取回路径不变），GLB 挂在其下。
+- 蒸汽发射点由 `SteamAnchor` 提供（原硬编码 `(0.38, 0.31, 0)`），壶底落点 `KETTLE_REST` 由支架 `RestAnchor` 提供（原硬编码 0.59）。
+- 受热发光：`prepare` 设置暗橙红自发光色，强度仍由「煮水」进度驱动；材质按实例克隆，不影响支架。
+- 支架四腿从 45° 改到 22.5° + k·90°：旧支架腿与 8 根 teepee 木柴（k·45°）重合、穿模。
+- 尺寸：真实 2~3 L 小壶（Ø 0.26 m）在这堆篝火（木柴展开约 1.3 m）里会被火焰完全吞没，所以做成 12 L 吊壶（Ø 0.36 m）；旧壶 Ø 0.56 m。
+- 程序化回退仍保留，且旧壶的 4 张 1024 铸铁 PNG 只在回退时才加载。
+- 蒸汽粒子球 8×6 段 → 16×12 段（近景可见棱面），蒸汽逻辑不变。
+
 ## 8. 分阶段计划
 
 每个阶段：Blender 制作 → 导出校验 → 接入（保留程序化回退）→ **与上一版本截图对比** → 再进入下一阶段。
@@ -226,7 +250,7 @@ const tent = await createTentInstance(assets); // 失败时抛错 → 回退程�
 | **1** ✔ | **Tent** + AssetManager / ModelRegistry 基础设施 | 帆布质感、接缝、褶皱、门帘厚度、拉绳；帐内暖光位置不变；冷暖关系 |
 | **2** ✔ | **Backpack + Chair** | 布料/织带/扣具的粗糙度差异；营地生活感 |
 | **3** ✔ | **Lantern** | 喷漆金属、黄铜、玻璃、局部光与火光叠加 |
-| 4 | Kettle + Stand | 与放置动画、受热自发光、蒸汽锚点结合 |
+| **4** ✔ | **Kettle + Stand** | 与放置动画、受热自发光、蒸汽锚点结合 |
 | 5 | Torch / Pinecone / Logs / Axe / Stump / WoodPile / Mug | 互动锚点、实例化与材质克隆 |
 
 每阶段结束同步复查光照：月光、篝火点光、提灯局部光、阴影柔和度、色调映射与曝光、自发光强度、粗糙度响应、接触阴影。
