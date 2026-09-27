@@ -160,7 +160,36 @@ http://localhost:8341
 
 ---
 
-## Blender 模型互通
+## 3D 资产管线（2.0）
+
+营地里的现实物品正逐步从"Three.js 程序几何拼装"升级为 **Blender 制作的 `.glb` 正式资产**：
+
+- 审计：[`docs/model-audit.md`](docs/model-audit.md) —— 每个物品的生成函数、几何、材质、动画/互动依赖与必须保留的锚点
+- 视觉方向：[`docs/art-direction.md`](docs/art-direction.md) —— 安静、温暖、有人住过、略有风霜的写实夜营地；冷月光 + 暖篝火
+- 管线规范：[`docs/asset-pipeline.md`](docs/asset-pipeline.md) —— 坐标标准、模型契约、PBR、性能预算、分阶段计划
+- 运行时：`src/assets/AssetManager.js`（GLTFLoader 加载/缓存/实例化）+ `src/assets/ModelRegistry.js`（节点契约）
+- 资产源：`tools/blender/*.py`（可复现的 Blender 构建脚本）→ `assets/source/*/*.blend` → `assets/models/*.glb`
+
+| 阶段 | 模型 | 状态 |
+|---|---|---|
+| Stage 1 | 帐篷 Tent | ✔ `assets/models/tent.glb`（帆布织纹、接缝、张力褶皱、门帘、拉绳、帐内陈设；约 2.6 万三角形、1.3 MB） |
+| Stage 2 | 背包、折叠椅 | 待制作 |
+| Stage 3 | 提灯 | 待制作 |
+| Stage 4 | 水壶 + 支架 | 待制作 |
+| Stage 5 | 火把、松果、木柴、斧头、树桩等 | 待制作 |
+
+重新生成帐篷（需要 Blender 4.x，或 `pip install bpy`）：
+
+```bash
+blender --background --python tools/blender/build_tent.py      # 输出 assets/models/tent.glb 与 assets/source/tent/tent.blend
+```
+
+也可以直接打开 `assets/source/tent/tent.blend` 修改，再按 `docs/asset-pipeline.md` §6 的设置导出覆盖 `assets/models/tent.glb`。
+正式资产加载失败（如文件缺失）时，页面自动回退到原来的程序化模型。
+
+---
+
+## Blender 模型互通（程序化模型）
 
 场景中的模型可以导出为 **glTF 2.0（.glb）**，在 Blender 中直接打开、微调，再放回页面替换程序化模型。
 
@@ -174,10 +203,11 @@ http://localhost:8341
 | 地形 | 当前场景的地面网格 | — |
 | 远山（森林） / 海岸丘陵与礁岛 | 远景山体 + 林带剪影 | ✓ |
 | 云杉 / 松树 / 棕榈 | 单棵树模板（树根在原点，高约 7~9 m） | ✓ 替换该树种的全部树 |
-| 帐篷 / 折叠椅 / 背包 / 提灯 / 柴垛 / 劈柴桩与斧头 / 搪瓷杯 | 单个道具（以自身原点导出） | ✓ |
+| 帐篷 | 当前场景中的帐篷（已是正式 GLB 资产） | —（直接编辑 `assets/source/tent/tent.blend`） |
+| 折叠椅 / 背包 / 提灯 / 柴垛 / 劈柴桩与斧头 / 搪瓷杯 | 单个道具（以自身原点导出） | ✓ |
 | 火堆（石圈与木柴） | 石块、木柴、炭块 | —（木柴有坍塌动画） |
 
-`assets/models/` 中已附带 12 个可覆盖模型的 .glb，可直接用 Blender 打开。
+`assets/models/procedural/` 中已附带 11 个可覆盖模型的 .glb，可直接用 Blender 打开。
 
 ### 2. 在 Blender 中打开
 
@@ -191,9 +221,9 @@ http://localhost:8341
 
 ### 3. 微调后放回页面
 
-1. 在 Blender 中 `文件 ▸ 导出 ▸ glTF 2.0`，格式选 **glTF Binary (.glb)**，以**同名**保存到 `assets/models/`（如 `tent.glb`）
-2. 编辑 `assets/models/models.json`，把对应项改为 `true`（也可以写成文件名，如 `"tent": "tent_v2.glb"`）
-3. 刷新页面（需通过 HTTP 服务打开）。浏览器控制台会打印 `[models] tent ← assets/models/tent.glb`
+1. 在 Blender 中 `文件 ▸ 导出 ▸ glTF 2.0`，格式选 **glTF Binary (.glb)**，以**同名**保存到 `assets/models/procedural/`（如 `chair.glb`）
+2. 编辑 `assets/models/procedural/models.json`，把对应项改为 `true`（也可以写成文件名，如 `"chair": "chair_v2.glb"`）
+3. 刷新页面（需通过 HTTP 服务打开）。浏览器控制台会打印 `[models] chair ← assets/models/procedural/chair.glb`
 
 注意事项：
 
@@ -213,9 +243,14 @@ Campfire/
 ├── README.md
 ├── README.zh-CN.md
 ├── README.ja.md
+├── docs/                # 模型审计、视觉方向、资产管线规范
+├── src/assets/          # AssetManager.js、ModelRegistry.js
+├── tools/blender/       # Blender 资产构建脚本（bpy）
 ├── assets/
 │   ├── textures/
-│   └── models/          # Blender 可打开的 .glb + models.json（覆盖开关）
+│   ├── models/          # 正式 .glb 资产（tent.glb …）
+│   │   └── procedural/  # 程序化模型导出 + models.json（覆盖开关）
+│   └── source/          # 资产源文件 .blend
 ├── scripts/
 └── .claude/
 ```

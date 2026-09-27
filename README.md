@@ -159,7 +159,36 @@ After entering the page, click anywhere to enable audio. Most browsers require a
 
 ---
 
-## Blender Interop
+## 3D Asset Pipeline (2.0)
+
+Real-world camp props are being upgraded from "procedurally assembled Three.js primitives" to **Blender-authored `.glb` production assets**:
+
+- Audit: [`docs/model-audit.md`](docs/model-audit.md) — generator, geometry, materials, animation/interaction dependencies and required anchors for every prop
+- Art direction: [`docs/art-direction.md`](docs/art-direction.md) — a quiet, warm, lived-in, slightly weathered realistic night camp; cold moonlight + warm fire
+- Pipeline spec: [`docs/asset-pipeline.md`](docs/asset-pipeline.md) — coordinate standard, model contracts, PBR, performance budget, staged plan
+- Runtime: `src/assets/AssetManager.js` (GLTFLoader loading/caching/instancing) + `src/assets/ModelRegistry.js` (node contracts)
+- Sources: `tools/blender/*.py` (reproducible Blender build scripts) → `assets/source/*/*.blend` → `assets/models/*.glb`
+
+| Stage | Models | Status |
+|---|---|---|
+| Stage 1 | Tent | ✔ `assets/models/tent.glb` (canvas weave, seams, tension folds, door roll, guy lines, lived-in interior; ~26k triangles, 1.3 MB) |
+| Stage 2 | Backpack, chair | planned |
+| Stage 3 | Lantern | planned |
+| Stage 4 | Kettle + stand | planned |
+| Stage 5 | Torch, pinecone, logs, axe, stump… | planned |
+
+Rebuild the tent (Blender 4.x, or `pip install bpy`):
+
+```bash
+blender --background --python tools/blender/build_tent.py      # writes assets/models/tent.glb and assets/source/tent/tent.blend
+```
+
+You can also open `assets/source/tent/tent.blend`, edit it and export over `assets/models/tent.glb` with the settings in `docs/asset-pipeline.md` §6.
+If a production asset fails to load (e.g. missing file), the page falls back to the original procedural model.
+
+---
+
+## Blender Interop (procedural models)
 
 Models can be exported as **glTF 2.0 (.glb)**, opened and tweaked in Blender, and then loaded back into the page in place of the procedural models.
 
@@ -173,10 +202,11 @@ At the bottom of the parameter panel, **"Blender models"**: pick a target → cl
 | Terrain | Ground mesh of the current scene | — |
 | Mountains (forest) / Coast hills & islets | Distant ranges + treeline silhouettes | ✓ |
 | Spruce / Pine / Palm | One tree template (root at origin, ~7–9 m tall) | ✓ replaces every tree of that species |
-| Tent / Chair / Backpack / Lantern / Woodpile / Stump & axe / Mug | A single prop (exported around its own origin) | ✓ |
+| Tent | The in-scene tent (already a production GLB) | — (edit `assets/source/tent/tent.blend`) |
+| Chair / Backpack / Lantern / Woodpile / Stump & axe / Mug | A single prop (exported around its own origin) | ✓ |
 | Fire pit | Stones, logs, embers | — (the logs have a collapse animation) |
 
-`assets/models/` already contains `.glb` files for the 12 overridable models, ready to open in Blender.
+`assets/models/procedural/` already contains `.glb` files for the 11 overridable models, ready to open in Blender.
 
 ### 2. Open in Blender
 
@@ -190,9 +220,9 @@ At the bottom of the parameter panel, **"Blender models"**: pick a target → cl
 
 ### 3. Load your edits back
 
-1. In Blender, `File ▸ Export ▸ glTF 2.0`, format **glTF Binary (.glb)**, saved under the **same name** in `assets/models/` (e.g. `tent.glb`)
-2. Edit `assets/models/models.json` and set that entry to `true` (or a file name, e.g. `"tent": "tent_v2.glb"`)
-3. Reload the page (served over HTTP). The browser console prints `[models] tent ← assets/models/tent.glb`
+1. In Blender, `File ▸ Export ▸ glTF 2.0`, format **glTF Binary (.glb)**, saved under the **same name** in `assets/models/procedural/` (e.g. `chair.glb`)
+2. Edit `assets/models/procedural/models.json` and set that entry to `true` (or a file name, e.g. `"chair": "chair_v2.glb"`)
+3. Reload the page (served over HTTP). The browser console prints `[models] chair ← assets/models/procedural/chair.glb`
 
 Notes:
 
@@ -212,9 +242,14 @@ Campfire/
 ├── README.md
 ├── README.zh-CN.md
 ├── README.ja.md
+├── docs/                # model audit, art direction, asset pipeline spec
+├── src/assets/          # AssetManager.js, ModelRegistry.js
+├── tools/blender/       # Blender asset build scripts (bpy)
 ├── assets/
 │   ├── textures/
-│   └── models/          # Blender-ready .glb files + models.json (override switches)
+│   ├── models/          # production .glb assets (tent.glb …)
+│   │   └── procedural/  # procedural-model exports + models.json (override switches)
+│   └── source/          # asset source files (.blend)
 ├── scripts/
 └── .claude/
 ```

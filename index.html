@@ -436,6 +436,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { mergeVertices, mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { AssetManager, createTentInstance } from './src/assets/AssetManager.js';
 
 /* ============================================================
    基础场景
@@ -469,6 +470,11 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.1;
+
+// 3D 资产管线（src/assets）：Blender 制作的正式模型在场景构建开始时就发起下载，
+// 与后面的程序化建模并行；用到时再 await（见帐篷摆放处）
+const assets = new AssetManager({ renderer });
+assets.preload(['tent']);
 document.getElementById('app').appendChild(renderer.domElement);
 
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -2945,11 +2951,29 @@ function makeLantern() {
 
 let tentGlow = null;   // 帐内暖光（挂在场景根部，收纳道具时仅归零强度，防止灯数变化触发重编译）
 {
-  const tent = makeTent();
+  // Stage 1：帐篷改用 Blender 制作的 GLB（tools/blender/build_tent.py → assets/models/tent.glb），
+  // 通过模型契约拿到帐内暖光锚点；GLB 不可用时回退到程序化 makeTent()
+  let tent, lightAnchor = null;
+  try {
+    const model = await createTentInstance(assets);
+    tent = model.root;
+    lightAnchor = model.anchors.interiorLight;
+  } catch (e) {
+    console.warn('[assets] tent.glb unavailable, falling back to the procedural tent:', e.message || e);
+    tent = makeTent();
+  }
   placeProp(tent, 2.30, 3.1, true, 'tent');        // 帐篷：左后方
   tent.updateMatrixWorld(true);
-  tentGlow = tent.userData.innerGlow;
-  scene.attach(tentGlow);                          // 保持世界位置不变，脱离道具组
+  if (lightAnchor) {
+    // 灯光不放进 GLB：由代码在锚点处创建，常驻场景根部（光源数量恒定）
+    tentGlow = new THREE.PointLight(0xffb26a, 0.9, 2.6, 2);
+    tentGlow.name = 'TentGlow';
+    lightAnchor.getWorldPosition(tentGlow.position);
+    scene.add(tentGlow);
+  } else {
+    tentGlow = tent.userData.innerGlow;
+    scene.attach(tentGlow);                        // 保持世界位置不变，脱离道具组
+  }
   placeProp(makeChair(), 0.15, 1.95, true, 'chair');        // 折叠椅：右侧，面向火
   placeProp(makeBackpack(), 0.62, 2.15, true, 'backpack');  // 背包：椅旁
   const lant = makeLantern();
@@ -6263,11 +6287,13 @@ function unlockBirthdaySettings() {
        - flatShading 材质的几何拆成硬边（glTF 没有"平直着色"开关）
        - 平行光按实际照射方向写入节点朝向（KHR_lights_punctual）；半球光 glTF 无对应，跳过
        - 未命名对象自动补名，大纲视图可读
-   · 覆盖加载：assets/models/models.json 中把某个模型设为 true，页面启动时用
-     assets/models/<名称>.glb 替换程序化模型（摆放位置 / 缩放 / 动画挂点保持不变）。
+   · 覆盖加载：assets/models/procedural/models.json 中把某个模型设为 true，页面启动时用
+     assets/models/procedural/<名称>.glb 替换程序化模型（摆放位置 / 缩放 / 动画挂点保持不变）。
      在 Blender 中微调后按同名导出 .glb 覆盖该文件，刷新页面即可看到效果
    ============================================================ */
-const MODEL_DIR = 'assets/models/';
+// v1「程序模型覆盖」：程序化模型导出后在 Blender 中微调，再放回页面替换。
+// 与正式资产（assets/models/*.glb，由 AssetManager + ModelRegistry 加载）分开存放
+const MODEL_DIR = 'assets/models/procedural/';
 const TEMPLATE_SEED = 11;                 // 树木模板（导出单棵树）使用的固定随机种子
 // 可导出的目标（顺序即下拉菜单顺序）
 const EXPORT_TARGETS = [
@@ -6275,9 +6301,10 @@ const EXPORT_TARGETS = [
   'tent', 'chair', 'backpack', 'lantern', 'woodpile', 'stump', 'mug', 'firepit'
 ];
 // 可被 Blender 模型覆盖的目标（其余只导出：地形被树木/散布物的落地计算依赖，火堆柴有坍塌动画）
+// 帐篷已升级为正式 GLB 资产（ModelRegistry: tent），不再走覆盖流程
 const OVERRIDABLE = new Set([
   'mountains', 'coast', 'spruce', 'pine', 'palm',
-  'tent', 'chair', 'backpack', 'lantern', 'woodpile', 'stump', 'mug'
+  'chair', 'backpack', 'lantern', 'woodpile', 'stump', 'mug'
 ]);
 
 // 导出源：mode = 'scene' 整个场景 / 'world' 保留世界坐标 / 'local' 以自身原点导出（去掉摆放位移与朝向，保留缩放）
@@ -6387,7 +6414,7 @@ function exportGeometry(geo, mat, ctx) {
   const key = `${geo.uuid}:${mat.vertexColors ? 'c' : ''}:${mat.flatShading ? 'f' : ''}`;
   if (ctx.geo.has(key)) return ctx.geo.get(key);
   let g = new THREE.BufferGeometry();
-  for (const a of ['position', 'normal', 'uv']) if (geo.attributes[a]) g.setAttribute(a, geo.attributes[a]);
+  for (const a of ['position', 'normal', 'uv', 'uv1']) if (geo.attributes[a]) g.setAttribute(a, geo.attributes[a]);
   if (mat.vertexColors && geo.attributes.color) g.setAttribute('color', geo.attributes.color);
   if (geo.index) g.setIndex(geo.index);
   if (mat.flatShading) {                        // 拆成独立三角形并重算面法线 = 硬边
@@ -6634,12 +6661,10 @@ async function loadModelOverrides() {
   const use = cfg.use || {};
   const keys = Object.keys(use).filter(k => use[k] && OVERRIDABLE.has(k));
   if (!keys.length) return;
-  const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
-  const loader = new GLTFLoader();
   for (const key of keys) {
     const file = typeof use[key] === 'string' ? use[key] : `${key}.glb`;
     try {
-      const gltf = await loader.loadAsync(MODEL_DIR + file);
+      const gltf = await assets.loadGLTF(MODEL_DIR + file);   // 与正式资产共用同一个 GLTFLoader
       applyModelOverride(key, gltf.scene);
       console.info(`[models] ${key} ← ${MODEL_DIR}${file}`);
     } catch (e) {
